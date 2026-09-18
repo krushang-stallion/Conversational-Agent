@@ -112,4 +112,4 @@ Once deployed, open your live URL and test the complete conversational flow:
 - [ ] **Voice Prompt**: Agent welcomes you and asks for your phone number.
 - [ ] **OTP Authentication**: Speak your phone number $\rightarrow$ Agent asks for OTP $\rightarrow$ Speak OTP.
 - [ ] **Stage 2 Expansion (Dynamic Projects)**: Once authenticated, agent automatically calls `get_user_projects` via MCP and blooms **your actual projects as 3D orbiting nodes around the sphere**.
-- [ ] **Tool Calling**: Ask *"Can you list all permissions for Sharda project?"* $\rightarrow$ The *Sharda Project* node illuminates in 3D and the agent answers in natural voice.
+- [ ] **Tool Calling**: Ask *"Can you list all permissions for <Project Name>?"* $\rightarrow$ The corresponding project node illuminates in 3D and the agent answers in natural voice.

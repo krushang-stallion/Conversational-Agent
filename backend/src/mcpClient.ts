@@ -9,7 +9,7 @@ export interface MCPToolDeclaration {
     properties?: Record<string, any>;
     required?: string[];
   };
-  nodeModule: string;
+  nodeModule?: string;
 }
 
 export interface ProjectInfo {
@@ -44,7 +44,7 @@ export class MCPClientManager {
         this.isConnected = true;
         console.log('✅ Connected to remote MCP Server');
 
-        // Discover remote tools
+        // Discover remote tools dynamically
         const remoteTools = await this.client.listTools();
         this.tools = remoteTools.tools.map((t) => ({
           name: t.name,
@@ -53,23 +53,21 @@ export class MCPClientManager {
             type: 'OBJECT',
             properties: t.inputSchema?.properties || {},
             required: (t.inputSchema?.required as string[]) || [],
-          },
-          nodeModule: this.mapToolToNode(t.name)
+          }
         }));
         console.log(`🛠️ Discovered ${this.tools.length} remote MCP tools.`);
         return;
       } catch (err) {
-        console.warn('⚠️ Could not connect to remote MCP Server, falling back to local registered tools:', err);
+        console.warn('⚠️ Could not connect to remote MCP Server, using local tool definitions:', err);
       }
     }
 
-    // Default registered tools
+    // Default tool declarations when running in offline mode
     this.tools = [
       {
         name: 'get_user_projects',
         description: 'Fetch all active projects associated with the user account.',
-        parameters: { type: 'OBJECT', properties: {} },
-        nodeModule: 'sharda project'
+        parameters: { type: 'OBJECT', properties: {} }
       },
       {
         name: 'get_project_permissions',
@@ -77,11 +75,10 @@ export class MCPClientManager {
         parameters: {
           type: 'OBJECT',
           properties: {
-            project_id: { type: 'STRING', description: 'ID of the project' }
-          },
-          required: ['project_id']
-        },
-        nodeModule: 'sharda project'
+            project_id: { type: 'STRING', description: 'ID of the project' },
+            project_name: { type: 'STRING', description: 'Name of the project' }
+          }
+        }
       },
       {
         name: 'switch_project',
@@ -92,8 +89,7 @@ export class MCPClientManager {
             project_id: { type: 'STRING', description: 'Project ID' }
           },
           required: ['project_id']
-        },
-        nodeModule: 'sharda project'
+        }
       }
     ];
   }
@@ -102,9 +98,10 @@ export class MCPClientManager {
     return this.tools;
   }
 
-  public getNodeForTool(toolName: string): string {
-    const tool = this.tools.find((t) => t.name === toolName);
-    return tool ? tool.nodeModule : 'sharda project';
+  public getNodeForTool(toolName: string, args?: Record<string, any>): string {
+    if (args?.project_name) return String(args.project_name);
+    if (args?.project_id) return String(args.project_id);
+    return toolName;
   }
 
   public async executeTool(name: string, args: Record<string, any>): Promise<any> {
@@ -123,22 +120,22 @@ export class MCPClientManager {
       }
     }
 
-    // Local fallback data
+    // Local simulated responses for offline testing
     switch (name) {
       case 'get_user_projects':
         return {
           status: 'success',
           projects: [
-            { id: '194', name: 'Sharda Project', description: 'Enterprise Neural Engine', status: 'ACTIVE' },
-            { id: '195', name: 'Stallion Alpha', description: 'Infrastructure Cluster', status: 'ACTIVE' }
+            { id: '101', name: 'Project Alpha', description: 'Production Workspace', status: 'ACTIVE' },
+            { id: '102', name: 'Project Beta', description: 'Development Cluster', status: 'ACTIVE' }
           ]
         };
 
       case 'get_project_permissions':
         return {
           status: 'success',
-          project_id: args.project_id || '194',
-          project_name: 'Sharda Project',
+          project_id: args.project_id || '101',
+          project_name: args.project_name || 'Project Alpha',
           role: 'Admin / Owner',
           permissions: ['READ_RECORDS', 'WRITE_DATA', 'DEPLOY_SERVICES', 'MANAGE_ACCESS'],
           accessLevel: 'FULL_PRIVILEGE'
@@ -147,8 +144,8 @@ export class MCPClientManager {
       case 'switch_project':
         return {
           status: 'success',
-          activeProjectId: args.project_id || '194',
-          message: `Switched active context to project ${args.project_id || '194'}.`
+          activeProjectId: args.project_id || '101',
+          message: `Switched active context to project ${args.project_id || '101'}.`
         };
 
       default:
@@ -166,16 +163,15 @@ export class MCPClientManager {
         const name = String(p.name || p.project_name || p.title || p.label || (p.id ? `Project ${p.id}` : '')).trim();
         if (!name) return;
 
-        // Skip non-project generic system terms if any
         const lower = name.toLowerCase();
-        if (lower === 'vector store' || lower === 'database cluster' || lower === 'system' || lower === 'null') return;
+        if (lower === 'system' || lower === 'null') return;
 
         const id = String(p.id || p.project_id || p.key || extractedProjects.length + 1);
         extractedProjects.push({
           id,
           name: name.toUpperCase(),
           detail: `ID: ${id} / ${p.status || 'ACTIVE'}`,
-          hot: Boolean(p.status === 'ACTIVE' || lower.includes('sharda'))
+          hot: Boolean(p.status === 'ACTIVE')
         });
       };
 
@@ -192,7 +188,6 @@ export class MCPClientManager {
                 processRawProject(list);
               }
             } catch (jsonErr) {
-              // Parse plain-text lines with project identifiers
               const lines = item.text.split('\n');
               for (const line of lines) {
                 const match = line.match(/(?:^|\d+[\.\)]\s*|\-\s*)([A-Za-z0-9_\- ]{3,})/);
@@ -222,18 +217,10 @@ export class MCPClientManager {
       console.warn('Could not fetch projects from remote MCP tool:', err);
     }
 
-    // Default fallback strictly containing ONLY user projects
+    // Default dynamic sample projects when running fully offline
     return [
-      { id: '194', name: 'SHARDA PROJECT', detail: 'ID: 194 / ACTIVE', hot: true },
-      { id: '195', name: 'STALLION ALPHA', detail: 'ID: 195 / ACTIVE', hot: true }
+      { id: '101', name: 'PROJECT ALPHA', detail: 'ID: 101 / ACTIVE', hot: true },
+      { id: '102', name: 'PROJECT BETA', detail: 'ID: 102 / ACTIVE', hot: true }
     ];
-  }
-
-  private mapToolToNode(toolName: string): string {
-    const lower = toolName.toLowerCase();
-    if (lower.includes('sharda')) return 'sharda project';
-    if (lower.includes('project')) return 'sharda project';
-    if (lower.includes('permission')) return 'sharda project';
-    return 'sharda project';
   }
 }

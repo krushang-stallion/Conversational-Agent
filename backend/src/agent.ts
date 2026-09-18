@@ -292,19 +292,26 @@ Provide concise, helpful, and vocal answers (2-4 sentences max).`;
 
   private async executeSimulatedTurn(userText: string, callbacks: AgentCallbacks): Promise<string> {
     const lower = userText.toLowerCase();
+    const primaryProject = this.userProjects[0]?.name || 'Active Project';
+    const primaryId = this.userProjects[0]?.id || '101';
 
-    if (lower.includes('permission') || lower.includes('sharda') || lower.includes('project')) {
-      callbacks.onNodeActive('sharda project');
-      setTimeout(() => callbacks.onNodeIdle('sharda project'), 1200);
-      return `For Sharda Project (ID: 194), your account has Full Administrator privileges including Read, Write, Deploy Services, and Manage Access permissions.`;
+    // Find if user mentioned any specific project from their dynamic list
+    const matchedProject = this.userProjects.find(p => lower.includes(p.name.toLowerCase()));
+    const targetProject = matchedProject ? matchedProject.name : primaryProject;
+    const targetId = matchedProject ? matchedProject.id : primaryId;
+
+    if (lower.includes('permission') || lower.includes('project') || lower.includes('access')) {
+      callbacks.onNodeActive(targetProject.toLowerCase());
+      setTimeout(() => callbacks.onNodeIdle(targetProject.toLowerCase()), 1200);
+      return `For ${targetProject} (ID: ${targetId}), your account has Full Administrator privileges including Read, Write, Deploy Services, and Manage Access permissions.`;
     }
 
     if (lower.includes('switch') || lower.includes('select')) {
-      callbacks.onNodeActive('sharda project');
-      setTimeout(() => callbacks.onNodeIdle('sharda project'), 1200);
-      return `Switched active workspace context to Sharda Project. All telemetry feeds and permissions are synchronized.`;
+      callbacks.onNodeActive(targetProject.toLowerCase());
+      setTimeout(() => callbacks.onNodeIdle(targetProject.toLowerCase()), 1200);
+      return `Switched active workspace context to ${targetProject}. All telemetry feeds and permissions are synchronized.`;
     }
 
-    return `Neural core synchronized for "${userText}". All dynamic project nodes are active and reachable.`;
+    return `Neural core synchronized for "${userText}". All ${this.userProjects.length || 0} dynamic project nodes are active and reachable.`;
   }
 }
