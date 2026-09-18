@@ -339,17 +339,29 @@ export function buildDynamicProjectNetwork(projectList: ProjectData[]) {
   dataPackets.length = 0;
   majorPulses.length = 0;
 
-  const count = Math.max(projectList.length, 6);
+  const count = projectList.length;
+  if (count === 0) return;
+
   activeProjectNodes = projectList.map((p, index) => {
-    // Distribute on 3D sphere orbit at radius 9.5
-    const phi = Math.acos(-1 + (2 * index) / count);
-    const theta = Math.sqrt(count * Math.PI) * phi;
     const R = 9.5;
-    const pos = new THREE.Vector3(
-      R * Math.cos(theta) * Math.sin(phi),
-      R * Math.sin(theta) * Math.sin(phi),
-      R * Math.cos(phi)
-    );
+    let pos: THREE.Vector3;
+
+    if (count === 1) {
+      pos = new THREE.Vector3(0, 1.5, R);
+    } else if (count === 2) {
+      const x = index === 0 ? -7.2 : 7.2;
+      pos = new THREE.Vector3(x, 1.2, 6.2);
+    } else {
+      // Golden Spiral / Fibonacci sphere distribution for exact N points
+      const phi = Math.acos(-1 + (2 * (index + 0.5)) / count);
+      const theta = Math.sqrt(count * Math.PI) * phi;
+      pos = new THREE.Vector3(
+        R * Math.cos(theta) * Math.sin(phi),
+        R * Math.sin(theta) * Math.sin(phi),
+        R * Math.cos(phi)
+      );
+    }
+
     return {
       name: p.name,
       detail: p.detail || `PROJECT / ${p.id}`,
