@@ -136,6 +136,35 @@
       font-size: 6px;
       letter-spacing: 0.09em;
     }
+    #start-label {
+      position: absolute;
+      top: 65%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      z-index: 10;
+      color: #d8bd5c;
+      font-size: 12px;
+      letter-spacing: 6px;
+      text-transform: uppercase;
+      pointer-events: none;
+      animation: pulse-label 2.5s infinite ease-in-out;
+      transition: opacity 0.5s ease, transform 0.5s ease;
+      text-shadow: 0 0 12px rgba(216, 189, 92, 0.6);
+      border: 1px solid rgba(216, 189, 92, 0.3);
+      padding: 10px 24px;
+      border-radius: 4px;
+      background: rgba(10, 8, 2, 0.4);
+      backdrop-filter: blur(2px);
+    }
+    #start-label.hidden {
+      opacity: 0 !important;
+      animation: none !important;
+      transform: translate(-50%, -40%);
+    }
+    @keyframes pulse-label {
+      0%, 100% { opacity: 0.3; border-color: rgba(216, 189, 92, 0.1); }
+      50% { opacity: 1; border-color: rgba(216, 189, 92, 0.5); box-shadow: 0 0 20px rgba(216, 189, 92, 0.2) inset; }
+    }
     @media (max-width: 700px) {
       .network-label strong { font-size: 7px; }
       .network-label span { display: none; }
@@ -145,6 +174,8 @@
 <body>
   <div id="canvas-container"></div>
   <div id="label-container"></div>
+  
+  <div id="start-label">CLICK TO WAKEUP NEURAL SYSTEM</div>
   
   <div id="status-overlay">AI STATE: IDLE</div>
 

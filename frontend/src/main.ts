@@ -303,10 +303,20 @@ const TAU = Math.PI * 2;
 
 const canvasContainer = document.querySelector<HTMLElement>('#canvas-container')!;
 const labelContainer = document.querySelector<HTMLElement>('#label-container')!;
+const startLabel = document.querySelector<HTMLElement>('#start-label')!;
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color('#070806');
 scene.fog = new THREE.FogExp2('#070806', 0.023);
+
+let sphereState: 'compressed' | 'expanding' | 'expanded' | 'compressing' = 'compressed';
+let nodesState: 'hidden' | 'expanding' | 'expanded' | 'compressing' = 'hidden';
+labelContainer.style.display = 'none';
+const sphereShells: THREE.Points[] = [];
+const nodesGroup = new THREE.Group();
+nodesGroup.scale.set(0.001, 0.001, 0.001);
+nodesGroup.visible = false;
+scene.add(nodesGroup);
 
 const camera = new THREE.PerspectiveCamera(42, innerWidth / innerHeight, 0.1, 100);
 camera.position.set(0, 0.15, 20.6);
@@ -426,7 +436,13 @@ function addSphereShell(radius: number, latitudes: number, longitudes: number, o
       sizes.push(0.22 + facing * 0.31 + Math.random() * 0.14);
     }
   }
-  addPointCloud(points, colors, sizes, 1, opacity);
+  const cloud = addPointCloud(points, colors, sizes, 1, opacity);
+  cloud.scale.set(0.001, 0.001, 0.001);
+  cloud.visible = false;
+  cloud.userData.baseOpacity = opacity;
+  (cloud.material as THREE.ShaderMaterial).uniforms.opacity.value = 0;
+  sphereShells.push(cloud as THREE.Points);
+  return cloud;
 }
 
 function addRing(radius: number, opacity: number, tiltX = 0, tiltY = 0, parent: THREE.Object3D = globe) {
@@ -465,73 +481,55 @@ function addCore() {
   const colors: THREE.Color[] = [];
   const sizes: number[] = [];
   for (let index = 0; index < 880; index++) {
-    const angle = Math.random() * TAU;
-    const radius = Math.pow(Math.random(), 1.75) * 0.58;
-    points.push(new THREE.Vector3(Math.cos(angle) * radius, Math.sin(angle) * radius, (Math.random() - 0.5) * 0.12));
+    const u = Math.random();
+    const v = Math.random();
+    const theta = u * TAU;
+    const phi = Math.acos(2.0 * v - 1.0);
+    // Use cube root for a perfectly even, solid spherical volume
+    const r = Math.cbrt(Math.random()) * 0.65;
+    
+    const x = r * Math.sin(phi) * Math.cos(theta);
+    const y = r * Math.sin(phi) * Math.sin(theta);
+    const z = r * Math.cos(phi);
+
+    points.push(new THREE.Vector3(x, y, z));
     colors.push(GOLD.clone().lerp(BRIGHT, 0.4 + Math.random() * 0.55));
     sizes.push(0.3 + Math.random() * 0.38);
   }
   addPointCloud(points, colors, sizes, 1.05, 1);
-  [0.32, 0.6, 0.95, 1.36].forEach((radius, index) => addRing(radius, 0.84 - index * 0.12));
+  // [0.32, 0.6, 0.95, 1.36].forEach((radius, index) => addRing(radius, 0.84 - index * 0.12));
 }
 
 addSphereShell(5.56, 59, 118, 0.9);
 addSphereShell(3.74, 53, 106, 0.97);
 addSphereShell(2.2, 44, 96, 0.94);
-addRadialLattice();
+// addRadialLattice();
 addCore();
-[2.2, 3.74, 5.56].forEach(radius => addRing(radius, 0.52));
-addRing(5.56, 0.28, Math.PI / 2);
-addRing(5.56, 0.17, 0, Math.PI / 2);
-addRing(6.25, 0.14);
-addRing(7.06, 0.1);
+// [2.2, 3.74, 5.56].forEach(radius => addRing(radius, 0.52));
+// addRing(5.56, 0.28, Math.PI / 2);
+// addRing(5.56, 0.17, 0, Math.PI / 2);
+// addRing(6.25, 0.14);
+// addRing(7.06, 0.1);
 
-function addArc(radius: number, start: number, end: number, xTilt: number, zTilt: number) {
-  const ellipse = new THREE.EllipseCurve(0, 0, radius, radius * 0.62, start, end);
-  const points = ellipse.getPoints(100).map(point => new THREE.Vector3(point.x, point.y, 0));
-  const arc = new THREE.Line(
-    new THREE.BufferGeometry().setFromPoints(points),
-    new THREE.LineBasicMaterial({ color: BRIGHT, transparent: true, opacity: 0.24, blending: THREE.AdditiveBlending })
-  );
-  arc.rotation.set(xTilt, 0, zTilt);
-  globe.add(arc);
-  return arc;
-}
 
-const arcs = [
-  addArc(5.9, -0.2, 1.22, 0.74, 0.1),
-  addArc(4.72, 1.8, 3.25, -0.57, -0.44),
-  addArc(6.35, 3.42, 4.78, 0.25, 0.56)
-];
 
 function addBackgroundDust() {
+  scene.add(camera);
   const points: THREE.Vector3[] = [];
   const colors: THREE.Color[] = [];
   const sizes: number[] = [];
   for (let index = 0; index < 390; index++) {
-    const angle = Math.random() * TAU;
-    const radius = 7.8 + Math.random() * 8.4;
-    points.push(new THREE.Vector3(Math.cos(angle) * radius, Math.sin(angle) * radius * 0.63, -4 - Math.random() * 4));
+    const x = (Math.random() - 0.5) * 80;
+    const y = (Math.random() - 0.5) * 80;
+    const z = -40 - Math.random() * 20;
+    points.push(new THREE.Vector3(x, y, z));
     colors.push(GOLD.clone().lerp(BRIGHT, Math.random() * 0.25));
-    sizes.push(Math.random() > 0.91 ? 1.3 : 0.35 + Math.random() * 0.25);
+    sizes.push(Math.random() > 0.91 ? 1.5 : 0.4 + Math.random() * 0.3);
   }
-  addPointCloud(points, colors, sizes, 0.75, 0.68, scene);
+  return addPointCloud(points, colors, sizes, 0.75, 0.68, camera);
 }
 
-function addHudBrackets() {
-  const positions: number[] = [];
-  for (const side of [-1, 1]) {
-    const x = side * 8.9;
-    positions.push(x, -4.9, -1, x, 4.9, -1);
-    positions.push(x, -4.9, -1, x + side * 0.48, -4.9, -1);
-    positions.push(x, 4.9, -1, x + side * 0.48, 4.9, -1);
-  }
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  scene.add(new THREE.LineSegments(geometry, new THREE.LineBasicMaterial({
-    color: DEEP_GOLD, transparent: true, opacity: 0.35
-  })));
-}
+
 
 interface ServiceNode {
   name: string;
@@ -561,13 +559,26 @@ const services: ServiceNode[] = [
   { name: 'POLICY', detail: 'RULES / SYNC', position: new THREE.Vector3(-4.65, 5.2, 0.1) }
 ];
 
-function addHexagon(position: THREE.Vector3, radius: number, hot: boolean) {
+// Map nodes to a completely 3D spherical layout
+services.forEach((service, i) => {
+  const r2d = Math.sqrt(service.position.x ** 2 + service.position.y ** 2);
+  const R = 9.5; // Target sphere radius
+  if (r2d < R) {
+    let z = Math.sqrt(R * R - r2d * r2d);
+    // Alternate z to distribute them around the sphere
+    if (i % 2 !== 0) z = -z;
+    service.position.z = z;
+  }
+});
+
+function addCircle(position: THREE.Vector3, radius: number, hot: boolean) {
   const points: THREE.Vector3[] = [];
-  for (let index = 0; index <= 6; index++) {
-    const angle = Math.PI / 6 + index / 6 * TAU;
+  const segments = 32;
+  for (let index = 0; index <= segments; index++) {
+    const angle = index / segments * TAU;
     points.push(new THREE.Vector3(position.x + Math.cos(angle) * radius, position.y + Math.sin(angle) * radius, position.z));
   }
-  scene.add(new THREE.Line(
+  nodesGroup.add(new THREE.Line(
     new THREE.BufferGeometry().setFromPoints(points),
     new THREE.LineBasicMaterial({
       color: hot ? BRIGHT : GOLD, transparent: true, opacity: hot ? 0.93 : 0.6, blending: THREE.AdditiveBlending
@@ -581,32 +592,33 @@ function addServiceNetwork() {
   const nodeColors: THREE.Color[] = [];
   const nodeSizes: number[] = [];
   services.forEach((service, index) => {
-    const angle = Math.atan2(service.position.y, service.position.x);
-    const nearAnchor = new THREE.Vector3(Math.cos(angle) * 5.14, Math.sin(angle) * 5.14, -0.25);
+    const dir = service.position.clone().normalize();
+    const nearAnchor = dir.clone().multiplyScalar(5.14);
     connections.push(nearAnchor.x, nearAnchor.y, nearAnchor.z, service.position.x, service.position.y, service.position.z);
     if (index % 2 === 0) {
-      const innerAnchor = new THREE.Vector3(Math.cos(angle + 0.27) * 3.65, Math.sin(angle + 0.27) * 3.65, -0.25);
+      const innerDir = dir.clone().applyAxisAngle(new THREE.Vector3(0, 0, 1), 0.27);
+      const innerAnchor = innerDir.multiplyScalar(3.65);
       connections.push(innerAnchor.x, innerAnchor.y, innerAnchor.z, service.position.x, service.position.y, service.position.z);
     }
     nodePoints.push(service.position);
     nodeColors.push(service.hot ? BRIGHT : GOLD);
     nodeSizes.push(service.hot ? 4.5 : 2.3);
-    addHexagon(service.position, service.hot ? 0.3 : 0.23, Boolean(service.hot));
+    addCircle(service.position, service.hot ? 0.3 : 0.23, Boolean(service.hot));
 
     const label = document.createElement('div');
     label.className = 'network-label';
     label.innerHTML = `<strong>${service.name}</strong><span>${service.detail}</span>`;
     const labelObject = new CSS2DObject(label);
     labelObject.position.copy(service.position).add(new THREE.Vector3((Math.sign(service.position.x) || 1) * 0.36, service.position.y > 3.5 ? 0.22 : -0.15, 0));
-    scene.add(labelObject);
+    nodesGroup.add(labelObject);
   });
 
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(connections, 3));
-  scene.add(new THREE.LineSegments(geometry, new THREE.LineBasicMaterial({
+  nodesGroup.add(new THREE.LineSegments(geometry, new THREE.LineBasicMaterial({
     color: GOLD, transparent: true, opacity: 0.38, blending: THREE.AdditiveBlending
   })));
-  addPointCloud(nodePoints, nodeColors, nodeSizes, 1.45, 1, scene);
+  addPointCloud(nodePoints, nodeColors, nodeSizes, 1.45, 1, nodesGroup);
 }
 
 interface DataFlow {
@@ -628,11 +640,10 @@ const dataPackets: DataPacket[] = [];
 let pulsePositionAttribute: THREE.BufferAttribute | null = null;
 
 function createDataFlow(start: THREE.Vector3, end: THREE.Vector3, index: number, bright = false) {
-  const direction = end.clone().sub(start);
-  const bend = new THREE.Vector3(-direction.y, direction.x, 0).normalize()
-    .multiplyScalar((index % 2 === 0 ? 1 : -1) * (0.48 + (index % 3) * 0.2));
-  const midpoint = start.clone().lerp(end, 0.5).add(bend);
-  midpoint.z = 0.32 + (index % 4) * 0.14;
+  // To make it completely 3D, we bulge the curve outward from the center (0,0,0)
+  const midpoint = start.clone().lerp(end, 0.5);
+  const bulge = midpoint.clone().normalize().multiplyScalar(2.0 + (index % 4) * 0.5);
+  midpoint.add(bulge);
 
   const curve = new THREE.QuadraticBezierCurve3(start, midpoint, end);
   const trace = new THREE.Line(
@@ -644,7 +655,7 @@ function createDataFlow(start: THREE.Vector3, end: THREE.Vector3, index: number,
       blending: THREE.AdditiveBlending
     })
   );
-  scene.add(trace);
+  nodesGroup.add(trace);
   const flow: DataFlow = {
     curve,
     trace,
@@ -657,8 +668,14 @@ function createDataFlow(start: THREE.Vector3, end: THREE.Vector3, index: number,
 function addDataFlows() {
   const coreTargets = [0, 1, 3, 5, 8, 10, 11, 12, 14, 16, 17];
   coreTargets.forEach((serviceIndex, index) => {
-    const startAngle = index / coreTargets.length * TAU;
-    const start = new THREE.Vector3(Math.cos(startAngle) * 0.42, Math.sin(startAngle) * 0.42, 0.25);
+    // Distribute start points on a small 3D sphere instead of a 2D circle
+    const phi = Math.acos(-1 + (2 * index) / coreTargets.length);
+    const theta = Math.sqrt(coreTargets.length * Math.PI) * phi;
+    const start = new THREE.Vector3(
+      0.42 * Math.cos(theta) * Math.sin(phi),
+      0.42 * Math.sin(theta) * Math.sin(phi),
+      0.42 * Math.cos(phi)
+    );
     createDataFlow(start, services[serviceIndex].position, index, Boolean(services[serviceIndex].hot));
   });
 
@@ -698,7 +715,7 @@ function addDataFlows() {
   geometry.setAttribute('aColor', new THREE.BufferAttribute(colors, 3));
   geometry.setAttribute('aSize', new THREE.BufferAttribute(sizes, 1));
   geometry.setAttribute('aPhase', new THREE.BufferAttribute(phases, 1));
-  scene.add(new THREE.Points(geometry, makePointMaterial(1.65, 1)));
+  nodesGroup.add(new THREE.Points(geometry, makePointMaterial(1.65, 1)));
 }
 
 interface MajorPulse {
@@ -740,7 +757,7 @@ function addMajorPulseTrails() {
   majorTrailMesh = new THREE.InstancedMesh(cylinder, trailMaterial, routeIndices.length * MAJOR_TRAIL_SEGMENTS);
   majorTrailMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   majorTrailMesh.frustumCulled = false;
-  scene.add(majorTrailMesh);
+  nodesGroup.add(majorTrailMesh);
   majorTrailHaloMesh = new THREE.InstancedMesh(
     haloCylinder,
     new THREE.MeshBasicMaterial({
@@ -755,7 +772,7 @@ function addMajorPulseTrails() {
   );
   majorTrailHaloMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   majorTrailHaloMesh.frustumCulled = false;
-  scene.add(majorTrailHaloMesh);
+  nodesGroup.add(majorTrailHaloMesh);
 
   const headPositions = new Float32Array(routeIndices.length * 3);
   const headColors = new Float32Array(routeIndices.length * 3);
@@ -781,7 +798,7 @@ function addMajorPulseTrails() {
   headGeometry.setAttribute('aColor', new THREE.BufferAttribute(headColors, 3));
   headGeometry.setAttribute('aSize', new THREE.BufferAttribute(headSizes, 1));
   headGeometry.setAttribute('aPhase', new THREE.BufferAttribute(headPhases, 1));
-  scene.add(new THREE.Points(headGeometry, makePointMaterial(2.2, 1)));
+  nodesGroup.add(new THREE.Points(headGeometry, makePointMaterial(2.2, 1)));
 
   for (let index = 0; index < routeIndices.length * MAJOR_TRAIL_SEGMENTS; index++) {
     majorTrailMesh.setMatrixAt(index, hiddenTrailMatrix);
@@ -838,23 +855,105 @@ function updateMajorPulseTrails(elapsed: number) {
   majorHeadPositionAttribute.needsUpdate = true;
 }
 
-addBackgroundDust();
-addHudBrackets();
+const backgroundDust = addBackgroundDust() as THREE.Points;
+backgroundDust.visible = false;
+
 addServiceNetwork();
 addDataFlows();
 addMajorPulseTrails();
+
+window.addEventListener('click', () => {
+  if (sphereState === 'compressed' || sphereState === 'compressing') {
+    sphereState = 'expanding';
+    backgroundDust.visible = true;
+    sphereShells.forEach(shell => shell.visible = true);
+    if (startLabel) startLabel.classList.add('hidden');
+  } else if (sphereState === 'expanded' || sphereState === 'expanding') {
+    sphereState = 'compressing';
+    nodesState = 'compressing';
+    backgroundDust.visible = false;
+    if (startLabel) startLabel.classList.remove('hidden');
+  }
+});
+
+function connectWebSocket() {
+  const ws = new WebSocket('ws://localhost:8080');
+  ws.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data);
+      if (data.type === 'STATE_CHANGE' && nodesState === 'hidden' && (sphereState === 'expanded' || sphereState === 'expanding')) {
+        nodesGroup.visible = true;
+        nodesState = 'expanding';
+      }
+    } catch (e) {}
+  };
+  ws.onclose = () => {
+    setTimeout(connectWebSocket, 2000);
+  };
+}
+connectWebSocket();
 
 const clock = new THREE.Clock();
 function animate() {
   requestAnimationFrame(animate);
   const elapsed = clock.getElapsedTime();
+
+  if (sphereState === 'expanding') {
+    let allExpanded = true;
+    sphereShells.forEach(shell => {
+      shell.scale.lerp(new THREE.Vector3(1, 1, 1), 0.03);
+      const mat = shell.material as THREE.ShaderMaterial;
+      mat.uniforms.opacity.value = THREE.MathUtils.lerp(mat.uniforms.opacity.value, shell.userData.baseOpacity, 0.04);
+      if (shell.scale.x < 0.99) allExpanded = false;
+    });
+    if (allExpanded) {
+      sphereState = 'expanded';
+    }
+  } else if (sphereState === 'expanded') {
+    sphereShells.forEach((shell, index) => {
+      const breathe = 1.0 + Math.sin(elapsed * 2.0 + index * 1.5) * 0.012;
+      shell.scale.set(breathe, breathe, breathe);
+      
+      const mat = shell.material as THREE.ShaderMaterial;
+      mat.uniforms.opacity.value = shell.userData.baseOpacity + Math.sin(elapsed * 3.0 + index) * 0.15;
+    });
+  } else if (sphereState === 'compressing') {
+    let allCompressed = true;
+    sphereShells.forEach(shell => {
+      shell.scale.lerp(new THREE.Vector3(0.001, 0.001, 0.001), 0.04);
+      const mat = shell.material as THREE.ShaderMaterial;
+      mat.uniforms.opacity.value = THREE.MathUtils.lerp(mat.uniforms.opacity.value, 0, 0.08);
+      if (shell.scale.x > 0.01) allCompressed = false;
+    });
+    if (allCompressed) {
+      sphereState = 'compressed';
+      sphereShells.forEach(shell => {
+        shell.scale.set(0.001, 0.001, 0.001);
+        shell.visible = false;
+      });
+    }
+  }
+
+  if (nodesState === 'expanding') {
+    labelContainer.style.display = 'block';
+    nodesGroup.scale.lerp(new THREE.Vector3(1, 1, 1), 0.02);
+    if (nodesGroup.scale.x > 0.99) {
+      nodesState = 'expanded';
+      nodesGroup.scale.set(1, 1, 1);
+    }
+  } else if (nodesState === 'compressing') {
+    nodesGroup.scale.lerp(new THREE.Vector3(0.001, 0.001, 0.001), 0.05);
+    if (nodesGroup.scale.x < 0.01) {
+      nodesState = 'hidden';
+      nodesGroup.scale.set(0.001, 0.001, 0.001);
+      nodesGroup.visible = false;
+      labelContainer.style.display = 'none';
+    }
+  }
+
   controls.update();
   globe.rotation.y = Math.sin(elapsed * 0.11) * 0.045;
   globe.rotation.z = Math.sin(elapsed * 0.08) * 0.012;
-  arcs.forEach((arc, index) => {
-    arc.rotation.z += 0.00075 * (index + 1);
-    arc.material.opacity = 0.14 + (Math.sin(elapsed * (0.7 + index * 0.17) + index) + 1) * 0.1;
-  });
   dataFlows.forEach((flow, index) => {
     flow.trace.material.opacity = 0.08 + (Math.sin(elapsed * 1.65 + flow.phase + index) + 1) * 0.09;
   });
