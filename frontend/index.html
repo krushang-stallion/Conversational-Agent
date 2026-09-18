@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Neural System Map</title>
+  <style>
+    body {
+      margin: 0;
+      background-color: #050505;
+      overflow: hidden;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    }
+    #canvas-container {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      z-index: 1;
+    }
+    /* This container holds the floating 3D text */
+    #label-container {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      z-index: 2;
+      pointer-events: none;
+    }
+    
+    /* Styling for the floating node labels */
+    .node-label {
+      color: #fff7cc;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      background: rgba(20, 15, 0, 0.6);
+      border: 1px solid rgba(212, 175, 55, 0.4);
+      padding: 6px 12px;
+      border-radius: 4px;
+      pointer-events: none;
+      opacity: 0.3;
+      transition: all 0.3s ease;
+      box-shadow: 0 0 10px rgba(212, 175, 55, 0);
+      margin-top: -20px;
+    }
+    .node-label.active {
+      opacity: 1;
+      color: #ffffff;
+      border-color: #ffd700;
+      box-shadow: 0 0 15px rgba(255, 215, 0, 0.6);
+      transform: scale(1.1);
+    }
+
+    /* Local Demo Controls */
+    #demo-controls {
+      position: absolute;
+      bottom: 30px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 10;
+      display: flex;
+      gap: 15px;
+      background: rgba(10, 10, 10, 0.8);
+      padding: 15px 25px;
+      border-radius: 12px;
+      border: 1px solid #d4af37;
+      box-shadow: 0 0 20px rgba(212, 175, 55, 0.2);
+    }
+    button {
+      background: transparent;
+      color: #d4af37;
+      border: 1px solid #d4af37;
+      padding: 8px 16px;
+      cursor: pointer;
+      font-weight: bold;
+      border-radius: 6px;
+      transition: all 0.2s;
+    }
+    button:hover, button.active {
+      background: #d4af37;
+      color: #000;
+      box-shadow: 0 0 15px #d4af37;
+    }
+    #status-overlay {
+      position: absolute;
+      top: 30px;
+      left: 30px;
+      color: #e5b95c;
+      font-size: 14px;
+      letter-spacing: 2px;
+      z-index: 10;
+    }
+    /* The reference is a clean visualization, with information attached to nodes instead of a UI panel. */
+    #demo-controls, #status-overlay {
+      display: none;
+    }
+    body {
+      background: #070806;
+      color-scheme: dark;
+      font-family: "IBM Plex Mono", "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+    }
+    body::after {
+      content: "";
+      position: fixed;
+      inset: 0;
+      z-index: 20;
+      pointer-events: none;
+      opacity: 0.17;
+      background-image: linear-gradient(rgba(255, 245, 189, 0.025) 1px, transparent 1px);
+      background-size: 100% 4px;
+      mix-blend-mode: screen;
+    }
+    .network-label {
+      width: max-content;
+      color: #d8bd5c;
+      letter-spacing: 0.04em;
+      opacity: 0.94;
+      text-shadow: 0 0 7px rgba(255, 213, 81, 0.35);
+      transform: translateY(-50%);
+    }
+    .network-label strong, .network-label span {
+      display: block;
+      white-space: nowrap;
+    }
+    .network-label strong {
+      font-size: 10px;
+      font-weight: 700;
+    }
+    .network-label span {
+      margin-top: 4px;
+      color: rgba(216, 189, 92, 0.58);
+      font-size: 6px;
+      letter-spacing: 0.09em;
+    }
+    @media (max-width: 700px) {
+      .network-label strong { font-size: 7px; }
+      .network-label span { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <div id="canvas-container"></div>
+  <div id="label-container"></div>
+  
+  <div id="status-overlay">AI STATE: IDLE</div>
+
+  <div id="demo-controls">
+    <button id="btn-idle" class="active">Idle</button>
+    <button id="btn-db">Query Database</button>
+    <button id="btn-kb">Search Knowledge</button>
+    <button id="btn-speak">Speak Response</button>
+  </div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
