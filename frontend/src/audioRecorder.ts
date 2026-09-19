@@ -54,6 +54,10 @@ export class AudioRecorder {
     }
   }
 
+  public isAudioMuted(): boolean {
+    return this.isMuted;
+  }
+
   public async start(callbacks: AudioRecorderCallbacks): Promise<void> {
     this.callbacks = callbacks;
     if (this.isRunning) return;

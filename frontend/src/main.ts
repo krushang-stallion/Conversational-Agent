@@ -27,6 +27,11 @@ const historyDrawer = document.querySelector<HTMLElement>('#history-drawer')!;
 const historyToggleBtn = document.querySelector<HTMLElement>('#history-toggle-btn')!;
 const historyCloseBtn = document.querySelector<HTMLElement>('#history-close-btn')!;
 const drawerBody = document.querySelector<HTMLElement>('#drawer-body')!;
+const muteToggleBtn = document.querySelector<HTMLElement>('#mute-toggle-btn')!;
+const micOnIcon = document.querySelector<HTMLElement>('#mic-on-icon')!;
+const micOffIcon = document.querySelector<HTMLElement>('#mic-off-icon')!;
+const muteBtnText = document.querySelector<HTMLElement>('#mute-btn-text')!;
+let isUserMuted = false;
 
 // --- THREE.JS SCENE SETUP ---
 const scene = new THREE.Scene();
@@ -106,11 +111,11 @@ function makePointMaterial(scale: number, opacity: number, allowAudioVibration =
       varying float vPulse;
 
       void main() {
-        vec3 displacedPos = position + normalize(position) * (audioLevel * 0.45 * sin(time * 6.0 + aPhase * 2.0) * allowVibration);
+        vec3 displacedPos = position + normalize(position) * (audioLevel * 0.08 * sin(time * 3.5 + aPhase * 2.0) * allowVibration);
         vec4 viewPosition = modelViewMatrix * vec4(displacedPos, 1.0);
-        vPulse = 0.78 + sin(time * 1.3 + aPhase) * 0.22 + (audioLevel * 0.4 * allowVibration);
+        vPulse = 0.78 + sin(time * 1.3 + aPhase) * 0.22 + (audioLevel * 0.15 * allowVibration);
         vColor = mix(aColor, colorTint, 0.45) * vPulse;
-        gl_PointSize = (aSize + audioLevel * 0.6 * allowVibration) * scale * (180.0 / -viewPosition.z);
+        gl_PointSize = (aSize + audioLevel * 0.2 * allowVibration) * scale * (180.0 / -viewPosition.z);
         gl_Position = projectionMatrix * viewPosition;
       }
     `,
@@ -358,21 +363,38 @@ function initActiveCometTrail() {
     })
   );
   nodesGroup.add(activePathHaloMesh);
+
+  // Initialize all comet meshes as hidden by default
+  cometHeadMesh.visible = false;
+  activePathTubeMesh.visible = false;
+  activePathHaloMesh.visible = false;
+  cometTrailMesh.visible = false;
+  cometTrailHaloMesh.visible = false;
+  for (let i = 0; i < ACTIVE_COMET_SEGMENTS; i++) {
+    cometTrailMesh.setMatrixAt(i, hiddenTrailMatrix);
+    cometTrailHaloMesh.setMatrixAt(i, hiddenTrailMatrix);
+  }
+  cometTrailMesh.instanceMatrix.needsUpdate = true;
+  cometTrailHaloMesh.instanceMatrix.needsUpdate = true;
+  activeCometTargetPos = null;
+  activeCometOpacity = 0;
 }
 
 function updateActiveCometTrail(elapsed: number) {
   if (!cometTrailMesh || !cometTrailHaloMesh || !cometHeadPosAttr || !cometHeadMesh || !activePathTubeMesh || !activePathHaloMesh) return;
 
   if (activeCometTargetPos) {
-    activeCometOpacity = THREE.MathUtils.lerp(activeCometOpacity, 1.0, 0.12);
+    activeCometOpacity = THREE.MathUtils.lerp(activeCometOpacity, 1.0, 0.15);
   } else {
-    activeCometOpacity = THREE.MathUtils.lerp(activeCometOpacity, 0.0, 0.12);
+    activeCometOpacity = THREE.MathUtils.lerp(activeCometOpacity, 0.0, 0.25);
   }
 
-  if (activeCometOpacity < 0.01) {
+  if (activeCometOpacity < 0.01 || !activeCometTargetPos) {
     cometHeadMesh.visible = false;
     activePathTubeMesh.visible = false;
     activePathHaloMesh.visible = false;
+    cometTrailMesh.visible = false;
+    cometTrailHaloMesh.visible = false;
     for (let i = 0; i < ACTIVE_COMET_SEGMENTS; i++) {
       cometTrailMesh.setMatrixAt(i, hiddenTrailMatrix);
       cometTrailHaloMesh.setMatrixAt(i, hiddenTrailMatrix);
@@ -385,6 +407,8 @@ function updateActiveCometTrail(elapsed: number) {
   cometHeadMesh.visible = true;
   activePathTubeMesh.visible = true;
   activePathHaloMesh.visible = true;
+  cometTrailMesh.visible = true;
+  cometTrailHaloMesh.visible = true;
 
   const target = activeCometTargetPos || new THREE.Vector3(0, 0, 10);
   const dir = target.clone().normalize();
@@ -467,24 +491,42 @@ function updateActiveCometTrail(elapsed: number) {
 export function setProjectHighlight(nodeModuleName: string | null, active: boolean) {
   if (!nodeModuleName || !active) {
     activeCometTargetPos = null;
+    activeCometOpacity = 0;
     projectVisualNodes.forEach((node) => {
       node.circleMesh.scale.set(1.0, 1.0, 1.0);
-      (node.circleMesh.material as THREE.LineBasicMaterial).color.copy(node.hot ? BRIGHT : GOLD);
-      (node.circleMesh.material as THREE.LineBasicMaterial).opacity = node.hot ? 0.93 : 0.6;
+      (node.circleMesh.material as THREE.LineBasicMaterial).color.copy(node.hot ? BRIGHT : BRIGHT.clone().lerp(GOLD, 0.25));
+      (node.circleMesh.material as THREE.LineBasicMaterial).opacity = node.hot ? 0.7 : 0.4;
       node.labelElement.classList.remove('node-highlight');
     });
     return;
   }
 
-  const query = nodeModuleName.toLowerCase();
+  const query = nodeModuleName.trim().toLowerCase();
+  const STOP_WORDS = new Set(['project', 'projects', 'active', 'test', 'node', 'nodes', 'neural', 'sphere', 'app', 'service', 'services', 'check', 'execute', 'login', 'verified']);
+  if (STOP_WORDS.has(query) || query.length < 2) {
+    return;
+  }
+
   let matchedNode: ProjectVisualNode | null = null;
 
+  // 1. Exact match
   for (const node of projectVisualNodes) {
-    const nameLower = node.name.toLowerCase();
-    const detailLower = node.detail.toLowerCase();
-    if (nameLower.includes(query) || query.includes(nameLower) || detailLower.includes(query) || query.includes(detailLower)) {
+    if (node.name.toLowerCase() === query) {
       matchedNode = node;
       break;
+    }
+  }
+
+  // 2. Word boundary match
+  if (!matchedNode) {
+    for (const node of projectVisualNodes) {
+      const nameLower = node.name.toLowerCase();
+      const escapedQuery = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const regex = new RegExp(`\\b${escapedQuery}\\b`, 'i');
+      if (regex.test(nameLower) || (query.length >= 4 && nameLower.includes(query))) {
+        matchedNode = node;
+        break;
+      }
     }
   }
 
@@ -492,14 +534,14 @@ export function setProjectHighlight(nodeModuleName: string | null, active: boole
     activeCometTargetPos = matchedNode.position;
     projectVisualNodes.forEach((node) => {
       if (node === matchedNode) {
-        node.circleMesh.scale.set(1.95, 1.95, 1.95);
+        node.circleMesh.scale.set(1.3, 1.3, 1.3);
         (node.circleMesh.material as THREE.LineBasicMaterial).color.set('#00ff88');
         (node.circleMesh.material as THREE.LineBasicMaterial).opacity = 1.0;
         node.labelElement.classList.add('node-highlight');
       } else {
         node.circleMesh.scale.set(1.0, 1.0, 1.0);
-        (node.circleMesh.material as THREE.LineBasicMaterial).color.copy(node.hot ? BRIGHT : GOLD);
-        (node.circleMesh.material as THREE.LineBasicMaterial).opacity = node.hot ? 0.93 : 0.6;
+        (node.circleMesh.material as THREE.LineBasicMaterial).color.copy(node.hot ? BRIGHT : BRIGHT.clone().lerp(GOLD, 0.25));
+        (node.circleMesh.material as THREE.LineBasicMaterial).opacity = node.hot ? 0.7 : 0.4;
         node.labelElement.classList.remove('node-highlight');
       }
     });
@@ -557,7 +599,7 @@ function addCircle(position: THREE.Vector3, radius: number, hot: boolean) {
   const circleMesh = new THREE.Line(
     new THREE.BufferGeometry().setFromPoints(points),
     new THREE.LineBasicMaterial({
-      color: hot ? BRIGHT : GOLD, transparent: true, opacity: hot ? 0.93 : 0.6, blending: THREE.AdditiveBlending
+      color: hot ? BRIGHT : BRIGHT.clone().lerp(GOLD, 0.25), transparent: true, opacity: hot ? 0.7 : 0.4, blending: THREE.AdditiveBlending
     })
   );
   nodesGroup.add(circleMesh);
@@ -649,14 +691,14 @@ export function buildDynamicProjectNetwork(projectList: ProjectData[]) {
     }
 
     nodePoints.push(project.position);
-    nodeColors.push(project.hot ? BRIGHT : GOLD);
-    nodeSizes.push(project.hot ? 4.5 : 2.5);
-    const circleMesh = addCircle(project.position, project.hot ? 0.32 : 0.24, Boolean(project.hot));
+    nodeColors.push(project.hot ? BRIGHT : BRIGHT.clone().lerp(GOLD, 0.2));
+    nodeSizes.push(project.hot ? 0.55 : 0.35);
+    const circleMesh = addCircle(project.position, project.hot ? 0.11 : 0.08, Boolean(project.hot));
 
-    // CSS2D Floating Label with Real Project Name
+    // CSS2D Floating Label with Real Project Name (only project name)
     const label = document.createElement('div');
     label.className = 'network-label';
-    label.innerHTML = `<strong>${project.name}</strong><span>${project.detail}</span>`;
+    label.innerHTML = `<strong>${project.name}</strong>`;
     nodeLabelElements.set(project.name.toLowerCase(), label);
     nodeLabelElements.set(project.detail.toLowerCase(), label);
 
@@ -679,9 +721,9 @@ export function buildDynamicProjectNetwork(projectList: ProjectData[]) {
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(connections, 3));
   nodesGroup.add(new THREE.LineSegments(geometry, new THREE.LineBasicMaterial({
-    color: GOLD, transparent: true, opacity: 0.38, blending: THREE.AdditiveBlending
+    color: BRIGHT.clone().lerp(GOLD, 0.4), transparent: true, opacity: 0.25, blending: THREE.AdditiveBlending
   })));
-  addPointCloud(nodePoints, nodeColors, nodeSizes, 1.45, 1, nodesGroup, false);
+  addPointCloud(nodePoints, nodeColors, nodeSizes, 0.7, 0.85, nodesGroup, false);
 
   // Data Flows
   activeProjectNodes.forEach((project, index) => {
@@ -783,6 +825,7 @@ export function buildDynamicProjectNetwork(projectList: ProjectData[]) {
 
   // Trigger Stage 2 Bloom Expansion
   labelContainer.style.display = 'block';
+  labelContainer.style.opacity = '1';
   nodesGroup.visible = true;
   nodesState = 'expanding';
 }
@@ -840,6 +883,12 @@ const audioRecorder = new AudioRecorder();
 
 function updateStatusUI(state: AIState) {
   currentAiState = state;
+  if (isUserMuted && state === 'listening') {
+    statusPill.className = 'status-pill muted';
+    statusText.innerText = '● MIC MUTED';
+    targetGlowColor.copy(GOLD);
+    return;
+  }
   statusPill.className = `status-pill ${state}`;
 
   switch (state) {
@@ -862,6 +911,36 @@ function updateStatusUI(state: AIState) {
       break;
   }
 }
+
+function setMuteUI(muted: boolean) {
+  isUserMuted = muted;
+  audioRecorder.setMuted(muted);
+  if (muted) {
+    muteToggleBtn.classList.add('muted');
+    micOnIcon.style.display = 'none';
+    micOffIcon.style.display = 'inline-block';
+    muteBtnText.innerText = 'UNMUTE';
+    if (sphereState === 'expanded' && currentAiState !== 'speaking') {
+      statusPill.className = 'status-pill muted';
+      statusText.innerText = '● MIC MUTED';
+      updateVoiceMeter(0);
+    }
+  } else {
+    muteToggleBtn.classList.remove('muted');
+    micOnIcon.style.display = 'inline-block';
+    micOffIcon.style.display = 'none';
+    muteBtnText.innerText = 'MUTE';
+    if (sphereState === 'expanded' && currentAiState !== 'speaking') {
+      updateStatusUI('listening');
+    }
+  }
+}
+
+muteToggleBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (sphereState === 'compressed' || sphereState === 'compressing') return;
+  setMuteUI(!isUserMuted);
+});
 
 function updateVoiceMeter(level: number) {
   currentAudioLevel = THREE.MathUtils.lerp(currentAudioLevel, level, 0.35);
@@ -901,7 +980,7 @@ function speakAgentText(text: string) {
     clearInterval(speechMeterInterval);
     speechMeterInterval = setInterval(() => {
       t += 0.2;
-      const simLevel = 0.35 + Math.sin(t * 3.5) * 0.25 + Math.random() * 0.2;
+      const simLevel = 0.2 + Math.sin(t * 2.0) * 0.08 + Math.random() * 0.04;
       updateVoiceMeter(simLevel);
     }, 50);
   };
@@ -956,14 +1035,25 @@ function displaySubtitle(speaker: 'user' | 'agent', text: string, isFinal: boole
   subtitleText.innerText = text;
 
   // Auto-detect project mentions in speech transcript
+  let detectedProjectName: string | null = null;
   if (activeProjectNodes.length > 0) {
     const textLower = text.toLowerCase();
+    const GENERIC_EXCLUDES = ['project', 'projects', 'active', 'test', 'node', 'nodes', 'neural', 'sphere', 'check', 'execute', 'login', 'verified'];
     for (const project of activeProjectNodes) {
-      if (textLower.includes(project.name.toLowerCase())) {
-        setProjectHighlight(project.name, true);
+      const pName = project.name.toLowerCase();
+      if (GENERIC_EXCLUDES.includes(pName) || pName.length < 3) continue;
+      if (textLower.includes(pName)) {
+        detectedProjectName = project.name;
         break;
       }
     }
+  }
+
+  if (detectedProjectName) {
+    setProjectHighlight(detectedProjectName, true);
+  } else if (isFinal && speaker === 'agent') {
+    // Hide laser trail when not conversing about a project
+    setProjectHighlight(null, false);
   }
 
   if (isFinal) {
@@ -1031,11 +1121,14 @@ window.addEventListener('click', () => {
     sphereState = 'expanding';
     nodesGroup.visible = false;
     labelContainer.style.display = 'none';
+    labelContainer.style.opacity = '1';
     nodesState = 'hidden';
     backgroundDust.visible = true;
     sphereShells.forEach((shell) => (shell.visible = true));
     if (startLabel) startLabel.classList.add('hidden');
 
+    // On wake up, microphone is unmuted by default
+    setMuteUI(false);
     wsClient.startSession();
 
     // Open VAD Microphone Session
@@ -1056,12 +1149,7 @@ window.addEventListener('click', () => {
       }
     });
   } else if (sphereState === 'expanded' || sphereState === 'expanding') {
-    // CLICK #2: COMPRESS & END SESSION
-    sphereState = 'compressing';
-    nodesState = 'compressing';
-    backgroundDust.visible = false;
-    if (startLabel) startLabel.classList.remove('hidden');
-
+    // CLICK #2: STAGED TWO-PHASE COLLAPSE & END SESSION
     if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel();
     }
@@ -1070,6 +1158,19 @@ window.addEventListener('click', () => {
     wsClient.endSession();
     updateStatusUI('idle');
     subtitleCard.classList.remove('active');
+    setProjectHighlight(null, false);
+    setMuteUI(false);
+
+    if (nodesState === 'expanded' || nodesState === 'expanding') {
+      // Phase 1: Collapse peripheral nodes first while holding concentric spheres open
+      nodesState = 'compressing';
+      labelContainer.style.opacity = '0';
+    } else {
+      // If nodes were not open, directly collapse spheres
+      sphereState = 'compressing';
+      nodesState = 'hidden';
+      labelContainer.style.display = 'none';
+    }
   }
 });
 
@@ -1087,7 +1188,7 @@ function animate() {
     material.uniforms.audioLevel.value = currentAudioLevel;
   });
 
-  // 1. Sphere Shell Expansion / Breathing / Compression
+  // 1. Sphere Shell Expansion / Breathing / Compression (Phase 2 of Collapse)
   if (sphereState === 'expanding') {
     let allExpanded = true;
     sphereShells.forEach((shell) => {
@@ -1111,10 +1212,10 @@ function animate() {
   } else if (sphereState === 'compressing') {
     let allCompressed = true;
     sphereShells.forEach((shell) => {
-      shell.scale.lerp(new THREE.Vector3(0.001, 0.001, 0.001), 0.04);
+      shell.scale.lerp(new THREE.Vector3(0.001, 0.001, 0.001), 0.038);
       const mat = shell.material as THREE.ShaderMaterial;
-      mat.uniforms.opacity.value = THREE.MathUtils.lerp(mat.uniforms.opacity.value, 0, 0.08);
-      if (shell.scale.x > 0.01) allCompressed = false;
+      mat.uniforms.opacity.value = THREE.MathUtils.lerp(mat.uniforms.opacity.value, 0, 0.06);
+      if (shell.scale.x > 0.008) allCompressed = false;
     });
     if (allCompressed) {
       sphereState = 'compressed';
@@ -1122,24 +1223,30 @@ function animate() {
         shell.scale.set(0.001, 0.001, 0.001);
         shell.visible = false;
       });
+      backgroundDust.visible = false;
+      if (startLabel) startLabel.classList.remove('hidden');
     }
   }
 
-  // 2. Peripheral Service Nodes Expansion (Stage 2)
+  // 2. Peripheral Service Nodes Expansion & Collapse (Phase 1 of Collapse)
   if (nodesState === 'expanding') {
     labelContainer.style.display = 'block';
+    labelContainer.style.opacity = '1';
     nodesGroup.scale.lerp(new THREE.Vector3(1, 1, 1), 0.025);
     if (nodesGroup.scale.x > 0.99) {
       nodesState = 'expanded';
       nodesGroup.scale.set(1, 1, 1);
     }
   } else if (nodesState === 'compressing') {
-    nodesGroup.scale.lerp(new THREE.Vector3(0.001, 0.001, 0.001), 0.05);
-    if (nodesGroup.scale.x < 0.01) {
+    nodesGroup.scale.lerp(new THREE.Vector3(0.001, 0.001, 0.001), 0.045);
+    if (nodesGroup.scale.x < 0.008) {
       nodesState = 'hidden';
       nodesGroup.scale.set(0.001, 0.001, 0.001);
       nodesGroup.visible = false;
       labelContainer.style.display = 'none';
+      labelContainer.style.opacity = '1';
+      // Phase 1 Completed: Nodes are fully absorbed -> Now trigger Phase 2 (Spheres Collapse)
+      sphereState = 'compressing';
     }
   }
 
