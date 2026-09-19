@@ -47,8 +47,8 @@ nodesGroup.scale.set(0.001, 0.001, 0.001);
 nodesGroup.visible = false;
 scene.add(nodesGroup);
 
-const camera = new THREE.PerspectiveCamera(42, innerWidth / innerHeight, 0.1, 100);
-camera.position.set(0, 0.15, 20.6);
+const camera = new THREE.PerspectiveCamera(40, innerWidth / innerHeight, 0.1, 100);
+camera.position.set(0, 0.15, 23.8);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -64,8 +64,8 @@ const controls = new OrbitControls(camera, labelRenderer.domElement);
 controls.enableDamping = true;
 controls.dampingFactor = 0.045;
 controls.enablePan = false;
-controls.minDistance = 15;
-controls.maxDistance = 27;
+controls.minDistance = 18;
+controls.maxDistance = 30;
 controls.autoRotate = true;
 controls.autoRotateSpeed = 0.18;
 
@@ -261,23 +261,29 @@ const nodeLabelElements = new Map<string, HTMLElement>();
 let activeProjectNodes: ServiceNode[] = [];
 const projectVisualNodes: ProjectVisualNode[] = [];
 
-// Dedicated Active Project Comet Trail Effect
-const ACTIVE_COMET_SEGMENTS = 18;
+// Dedicated Active Project Comet Trail & Persistent Glowing 3D Tube Path Effect
+const ACTIVE_COMET_SEGMENTS = 26;
 let activeCometTargetPos: THREE.Vector3 | null = null;
 let activeCometOpacity = 0;
-let activeCometProgress = 0;
 
 let cometHeadMesh: THREE.Points | null = null;
 let cometTrailMesh: THREE.InstancedMesh<THREE.CylinderGeometry, THREE.MeshBasicMaterial> | null = null;
 let cometTrailHaloMesh: THREE.InstancedMesh<THREE.CylinderGeometry, THREE.MeshBasicMaterial> | null = null;
 let cometHeadPosAttr: THREE.BufferAttribute | null = null;
 
+// Volumetric 3D Tube Path Meshes for THICK Beam
+let activePathTubeMesh: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial> | null = null;
+let activePathHaloMesh: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial> | null = null;
+
 function initActiveCometTrail() {
-  const cylinder = new THREE.CylinderGeometry(0.12, 0.05, 1, 8, 1, true);
-  const haloCylinder = new THREE.CylinderGeometry(0.24, 0.09, 1, 8, 1, true);
+  const cylinder = new THREE.CylinderGeometry(0.06, 0.02, 1, 6, 1, true);
+  const haloCylinder = new THREE.CylinderGeometry(0.12, 0.04, 1, 6, 1, true);
+
+  const neonGreen = new THREE.Color('#00ff88');
+  const neonCyan = new THREE.Color('#00ffc8');
 
   const trailMaterial = new THREE.MeshBasicMaterial({
-    color: new THREE.Color('#00ffc8'),
+    color: neonGreen,
     vertexColors: true,
     transparent: true,
     opacity: 1,
@@ -293,10 +299,10 @@ function initActiveCometTrail() {
   cometTrailHaloMesh = new THREE.InstancedMesh(
     haloCylinder,
     new THREE.MeshBasicMaterial({
-      color: new THREE.Color('#00e5ff'),
+      color: neonCyan,
       vertexColors: true,
       transparent: true,
-      opacity: 0.45,
+      opacity: 0.5,
       depthWrite: false,
       blending: THREE.AdditiveBlending
     }),
@@ -306,9 +312,10 @@ function initActiveCometTrail() {
   cometTrailHaloMesh.frustumCulled = false;
   nodesGroup.add(cometTrailHaloMesh);
 
+  // Particle Head
   const headPos = new Float32Array(3);
-  const headColor = new Float32Array([1, 1, 1]);
-  const headSize = new Float32Array([2.2]);
+  const headColor = new Float32Array([0, 1, 0.53]); // #00ff88
+  const headSize = new Float32Array([1.5]);
   const headPhase = new Float32Array([0]);
 
   const geo = new THREE.BufferGeometry();
@@ -318,12 +325,43 @@ function initActiveCometTrail() {
   geo.setAttribute('aSize', new THREE.BufferAttribute(headSize, 1));
   geo.setAttribute('aPhase', new THREE.BufferAttribute(headPhase, 1));
 
-  cometHeadMesh = new THREE.Points(geo, makePointMaterial(4.2, 1, false));
+  cometHeadMesh = new THREE.Points(geo, makePointMaterial(2.2, 1, false));
   nodesGroup.add(cometHeadMesh);
+
+  // Initial Sleek Laser Tube for path (reduced width)
+  const initCurve = new THREE.QuadraticBezierCurve3(
+    new THREE.Vector3(0, 0, 0),
+    new THREE.Vector3(0, 0, 3),
+    new THREE.Vector3(0, 0, 6)
+  );
+
+  activePathTubeMesh = new THREE.Mesh(
+    new THREE.TubeGeometry(initCurve, 30, 0.035, 8, false),
+    new THREE.MeshBasicMaterial({
+      color: neonGreen,
+      transparent: true,
+      opacity: 0.95,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending
+    })
+  );
+  nodesGroup.add(activePathTubeMesh);
+
+  activePathHaloMesh = new THREE.Mesh(
+    new THREE.TubeGeometry(initCurve, 30, 0.08, 8, false),
+    new THREE.MeshBasicMaterial({
+      color: neonCyan,
+      transparent: true,
+      opacity: 0.55,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending
+    })
+  );
+  nodesGroup.add(activePathHaloMesh);
 }
 
 function updateActiveCometTrail(elapsed: number) {
-  if (!cometTrailMesh || !cometTrailHaloMesh || !cometHeadPosAttr || !cometHeadMesh) return;
+  if (!cometTrailMesh || !cometTrailHaloMesh || !cometHeadPosAttr || !cometHeadMesh || !activePathTubeMesh || !activePathHaloMesh) return;
 
   if (activeCometTargetPos) {
     activeCometOpacity = THREE.MathUtils.lerp(activeCometOpacity, 1.0, 0.12);
@@ -333,6 +371,8 @@ function updateActiveCometTrail(elapsed: number) {
 
   if (activeCometOpacity < 0.01) {
     cometHeadMesh.visible = false;
+    activePathTubeMesh.visible = false;
+    activePathHaloMesh.visible = false;
     for (let i = 0; i < ACTIVE_COMET_SEGMENTS; i++) {
       cometTrailMesh.setMatrixAt(i, hiddenTrailMatrix);
       cometTrailHaloMesh.setMatrixAt(i, hiddenTrailMatrix);
@@ -343,35 +383,54 @@ function updateActiveCometTrail(elapsed: number) {
   }
 
   cometHeadMesh.visible = true;
+  activePathTubeMesh.visible = true;
+  activePathHaloMesh.visible = true;
 
   const target = activeCometTargetPos || new THREE.Vector3(0, 0, 10);
   const dir = target.clone().normalize();
   const start = new THREE.Vector3(0, 0, 0);
   const mid = start.clone().lerp(target, 0.5);
-  // Slight radial arc for majestic comet trail
   mid.add(dir.clone().cross(UP).normalize().multiplyScalar(0.75));
-  const curve = new THREE.QuadraticBezierCurve3(start, mid, target);
+  const fullCurve = new THREE.QuadraticBezierCurve3(start, mid, target);
 
-  const speed = 1.4;
-  const progress = (elapsed * speed) % 1.0;
-  const trailLength = 0.38;
-  const tailStartProgress = Math.max(0, progress - trailLength);
-  const trailSpan = progress - tailStartProgress;
+  const speed = 1.25;
+  const progress = Math.max(0.03, (elapsed * speed) % 1.0);
 
-  // Set comet head position
-  curve.getPointAt(progress, trailEnd);
+  // Set particle head position
+  fullCurve.getPointAt(progress, trailEnd);
   cometHeadPosAttr.setXYZ(0, trailEnd.x, trailEnd.y, trailEnd.z);
   cometHeadPosAttr.needsUpdate = true;
 
-  const cometColor = new THREE.Color('#00ffc8');
-  const cometCyan = new THREE.Color('#00e5ff');
+  // DYNAMIC SUB-CURVE: ONLY the path behind the moving particle grows and glows!
+  const currentHeadPos = trailEnd.clone();
+  const subStart = new THREE.Vector3(0, 0, 0);
+  const subMid = subStart.clone().lerp(currentHeadPos, 0.5);
+  subMid.add(dir.clone().cross(UP).normalize().multiplyScalar(0.75 * progress));
+  const subCurve = new THREE.QuadraticBezierCurve3(subStart, subMid, currentHeadPos);
+
+  const segments = Math.max(6, Math.floor(32 * progress));
+
+  // Dynamically update laser tube geometry strictly along subCurve
+  activePathTubeMesh.geometry.dispose();
+  activePathHaloMesh.geometry.dispose();
+  activePathTubeMesh.geometry = new THREE.TubeGeometry(subCurve, segments, 0.035, 8, false);
+  activePathHaloMesh.geometry = new THREE.TubeGeometry(subCurve, segments, 0.08, 8, false);
+
+  (activePathTubeMesh.material as THREE.MeshBasicMaterial).opacity = activeCometOpacity * 0.95;
+  (activePathHaloMesh.material as THREE.MeshBasicMaterial).opacity = activeCometOpacity * 0.55;
+
+  const tailStartProgress = 0.0;
+  const trailSpan = Math.max(0.04, progress - tailStartProgress);
+
+  const neonGreen = new THREE.Color('#00ff88');
+  const neonCyan = new THREE.Color('#00ffc8');
 
   for (let segment = 0; segment < ACTIVE_COMET_SEGMENTS; segment++) {
-    const startProgress = tailStartProgress + (trailSpan * segment) / ACTIVE_COMET_SEGMENTS;
-    const endProgress = tailStartProgress + (trailSpan * (segment + 1)) / ACTIVE_COMET_SEGMENTS;
+    const sProgress = tailStartProgress + (trailSpan * segment) / ACTIVE_COMET_SEGMENTS;
+    const eProgress = tailStartProgress + (trailSpan * (segment + 1)) / ACTIVE_COMET_SEGMENTS;
 
-    curve.getPointAt(startProgress, trailStart);
-    curve.getPointAt(endProgress, trailEnd);
+    fullCurve.getPointAt(sProgress, trailStart);
+    fullCurve.getPointAt(eProgress, trailEnd);
 
     trailDirection.subVectors(trailEnd, trailStart);
     const length = trailDirection.length();
@@ -385,19 +444,19 @@ function updateActiveCometTrail(elapsed: number) {
     trailMidpoint.addVectors(trailStart, trailEnd).multiplyScalar(0.5);
     trailRotation.setFromUnitVectors(UP, trailDirection.normalize());
     const headStrength = (segment + 1) / ACTIVE_COMET_SEGMENTS;
-    trailScale.set(1.2 + headStrength * 0.8, length * 1.25, 1.2 + headStrength * 0.8);
+    trailScale.set(0.9 + headStrength * 0.6, length * 1.15, 0.9 + headStrength * 0.6);
 
     trailMatrix.compose(trailMidpoint, trailRotation, trailScale);
     cometTrailMesh.setMatrixAt(segment, trailMatrix);
     cometTrailHaloMesh.setMatrixAt(segment, trailMatrix);
 
-    trailColor.copy(cometCyan).lerp(cometColor, headStrength);
+    trailColor.copy(neonCyan).lerp(neonGreen, headStrength);
     cometTrailMesh.setColorAt(segment, trailColor);
     cometTrailHaloMesh.setColorAt(segment, trailColor);
   }
 
   (cometTrailMesh.material as THREE.MeshBasicMaterial).opacity = activeCometOpacity;
-  (cometTrailHaloMesh.material as THREE.MeshBasicMaterial).opacity = activeCometOpacity * 0.45;
+  (cometTrailHaloMesh.material as THREE.MeshBasicMaterial).opacity = activeCometOpacity * 0.65;
 
   cometTrailMesh.instanceMatrix.needsUpdate = true;
   cometTrailHaloMesh.instanceMatrix.needsUpdate = true;
@@ -434,7 +493,7 @@ export function setProjectHighlight(nodeModuleName: string | null, active: boole
     projectVisualNodes.forEach((node) => {
       if (node === matchedNode) {
         node.circleMesh.scale.set(1.95, 1.95, 1.95);
-        (node.circleMesh.material as THREE.LineBasicMaterial).color.set('#00ffc8');
+        (node.circleMesh.material as THREE.LineBasicMaterial).color.set('#00ff88');
         (node.circleMesh.material as THREE.LineBasicMaterial).opacity = 1.0;
         node.labelElement.classList.add('node-highlight');
       } else {
@@ -546,14 +605,14 @@ export function buildDynamicProjectNetwork(projectList: ProjectData[]) {
   if (count === 0) return;
 
   activeProjectNodes = projectList.map((p, index) => {
-    const R = 9.5;
+    const R = 6.8;
     let pos: THREE.Vector3;
 
     if (count === 1) {
-      pos = new THREE.Vector3(0, 1.5, R);
+      pos = new THREE.Vector3(0, 1.2, R);
     } else if (count === 2) {
-      const x = index === 0 ? -7.2 : 7.2;
-      pos = new THREE.Vector3(x, 1.2, 6.2);
+      const x = index === 0 ? -5.4 : 5.4;
+      pos = new THREE.Vector3(x, 1.0, 4.8);
     } else {
       // Golden Spiral / Fibonacci sphere distribution for exact N points
       const phi = Math.acos(-1 + (2 * (index + 0.5)) / count);
@@ -580,12 +639,12 @@ export function buildDynamicProjectNetwork(projectList: ProjectData[]) {
 
   activeProjectNodes.forEach((project, index) => {
     const dir = project.position.clone().normalize();
-    const nearAnchor = dir.clone().multiplyScalar(5.14);
+    const nearAnchor = dir.clone().multiplyScalar(3.65);
     connections.push(nearAnchor.x, nearAnchor.y, nearAnchor.z, project.position.x, project.position.y, project.position.z);
 
     if (index % 2 === 0) {
       const innerDir = dir.clone().applyAxisAngle(new THREE.Vector3(0, 0, 1), 0.27);
-      const innerAnchor = innerDir.multiplyScalar(3.65);
+      const innerAnchor = innerDir.multiplyScalar(2.8);
       connections.push(innerAnchor.x, innerAnchor.y, innerAnchor.z, project.position.x, project.position.y, project.position.z);
     }
 
