@@ -27,11 +27,30 @@ export class AudioRecorder {
     }
   }
 
+  private muteCooldownTimer: any = null;
+
   public setMuted(muted: boolean): void {
     this.isMuted = muted;
+    clearTimeout(this.silenceTimer);
+    clearTimeout(this.muteCooldownTimer);
+    this.finalTranscriptBuffer = '';
+
     if (muted) {
-      this.finalTranscriptBuffer = '';
-      clearTimeout(this.silenceTimer);
+      if (this.recognition) {
+        try {
+          this.recognition.abort();
+        } catch (e) {}
+      }
+    } else {
+      // Small cooldown delay when unmuting to ignore audio echoing right as TTS stops
+      this.muteCooldownTimer = setTimeout(() => {
+        this.finalTranscriptBuffer = '';
+        if (this.isRunning && this.recognition) {
+          try {
+            this.recognition.start();
+          } catch (e) {}
+        }
+      }, 400);
     }
   }
 

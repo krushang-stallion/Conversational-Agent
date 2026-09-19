@@ -80,7 +80,7 @@ globe.rotation.x = -0.025;
 scene.add(globe);
 
 // --- SHADERS ---
-function makePointMaterial(scale: number, opacity: number) {
+function makePointMaterial(scale: number, opacity: number, allowAudioVibration = true) {
   const material = new THREE.ShaderMaterial({
     transparent: true,
     depthWrite: false,
@@ -90,6 +90,7 @@ function makePointMaterial(scale: number, opacity: number) {
       scale: { value: scale },
       opacity: { value: opacity },
       audioLevel: { value: 0 },
+      allowVibration: { value: allowAudioVibration ? 1.0 : 0.0 },
       colorTint: { value: GOLD.clone() }
     },
     vertexShader: `
@@ -99,16 +100,17 @@ function makePointMaterial(scale: number, opacity: number) {
       uniform float time;
       uniform float scale;
       uniform float audioLevel;
+      uniform float allowVibration;
       uniform vec3 colorTint;
       varying vec3 vColor;
       varying float vPulse;
 
       void main() {
-        vec3 displacedPos = position + normalize(position) * (audioLevel * 0.45 * sin(time * 6.0 + aPhase * 2.0));
+        vec3 displacedPos = position + normalize(position) * (audioLevel * 0.45 * sin(time * 6.0 + aPhase * 2.0) * allowVibration);
         vec4 viewPosition = modelViewMatrix * vec4(displacedPos, 1.0);
-        vPulse = 0.78 + sin(time * 1.3 + aPhase) * 0.22 + audioLevel * 0.4;
+        vPulse = 0.78 + sin(time * 1.3 + aPhase) * 0.22 + (audioLevel * 0.4 * allowVibration);
         vColor = mix(aColor, colorTint, 0.45) * vPulse;
-        gl_PointSize = (aSize + audioLevel * 0.6) * scale * (180.0 / -viewPosition.z);
+        gl_PointSize = (aSize + audioLevel * 0.6 * allowVibration) * scale * (180.0 / -viewPosition.z);
         gl_Position = projectionMatrix * viewPosition;
       }
     `,
@@ -135,7 +137,8 @@ function addPointCloud(
   sizes: number[],
   scale: number,
   opacity: number,
-  parent: THREE.Object3D = globe
+  parent: THREE.Object3D = globe,
+  allowAudioVibration = true
 ) {
   const geometry = new THREE.BufferGeometry();
   const positions = new Float32Array(points.length * 3);
@@ -153,7 +156,7 @@ function addPointCloud(
   geometry.setAttribute('aSize', new THREE.Float32BufferAttribute(sizes, 1));
   geometry.setAttribute('aPhase', new THREE.BufferAttribute(phases, 1));
 
-  const cloud = new THREE.Points(geometry, makePointMaterial(scale, opacity));
+  const cloud = new THREE.Points(geometry, makePointMaterial(scale, opacity, allowAudioVibration));
   parent.add(cloud);
   return cloud;
 }
@@ -237,6 +240,7 @@ const backgroundDust = addBackgroundDust() as THREE.Points;
 backgroundDust.visible = false;
 
 // --- DYNAMIC PROJECT NODES & 2ND EXPANSION BUILDER ---
+// --- DYNAMIC PROJECT NODES & 2ND EXPANSION BUILDER ---
 interface ServiceNode {
   name: string;
   detail: string;
@@ -244,8 +248,204 @@ interface ServiceNode {
   hot?: boolean;
 }
 
+interface ProjectVisualNode {
+  name: string;
+  detail: string;
+  position: THREE.Vector3;
+  circleMesh: THREE.Line;
+  labelElement: HTMLElement;
+  hot?: boolean;
+}
+
 const nodeLabelElements = new Map<string, HTMLElement>();
 let activeProjectNodes: ServiceNode[] = [];
+const projectVisualNodes: ProjectVisualNode[] = [];
+
+// Dedicated Active Project Comet Trail Effect
+const ACTIVE_COMET_SEGMENTS = 18;
+let activeCometTargetPos: THREE.Vector3 | null = null;
+let activeCometOpacity = 0;
+let activeCometProgress = 0;
+
+let cometHeadMesh: THREE.Points | null = null;
+let cometTrailMesh: THREE.InstancedMesh<THREE.CylinderGeometry, THREE.MeshBasicMaterial> | null = null;
+let cometTrailHaloMesh: THREE.InstancedMesh<THREE.CylinderGeometry, THREE.MeshBasicMaterial> | null = null;
+let cometHeadPosAttr: THREE.BufferAttribute | null = null;
+
+function initActiveCometTrail() {
+  const cylinder = new THREE.CylinderGeometry(0.12, 0.05, 1, 8, 1, true);
+  const haloCylinder = new THREE.CylinderGeometry(0.24, 0.09, 1, 8, 1, true);
+
+  const trailMaterial = new THREE.MeshBasicMaterial({
+    color: new THREE.Color('#00ffc8'),
+    vertexColors: true,
+    transparent: true,
+    opacity: 1,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending
+  });
+
+  cometTrailMesh = new THREE.InstancedMesh(cylinder, trailMaterial, ACTIVE_COMET_SEGMENTS);
+  cometTrailMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  cometTrailMesh.frustumCulled = false;
+  nodesGroup.add(cometTrailMesh);
+
+  cometTrailHaloMesh = new THREE.InstancedMesh(
+    haloCylinder,
+    new THREE.MeshBasicMaterial({
+      color: new THREE.Color('#00e5ff'),
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.45,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending
+    }),
+    ACTIVE_COMET_SEGMENTS
+  );
+  cometTrailHaloMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  cometTrailHaloMesh.frustumCulled = false;
+  nodesGroup.add(cometTrailHaloMesh);
+
+  const headPos = new Float32Array(3);
+  const headColor = new Float32Array([1, 1, 1]);
+  const headSize = new Float32Array([2.2]);
+  const headPhase = new Float32Array([0]);
+
+  const geo = new THREE.BufferGeometry();
+  cometHeadPosAttr = new THREE.BufferAttribute(headPos, 3);
+  geo.setAttribute('position', cometHeadPosAttr);
+  geo.setAttribute('aColor', new THREE.BufferAttribute(headColor, 3));
+  geo.setAttribute('aSize', new THREE.BufferAttribute(headSize, 1));
+  geo.setAttribute('aPhase', new THREE.BufferAttribute(headPhase, 1));
+
+  cometHeadMesh = new THREE.Points(geo, makePointMaterial(4.2, 1, false));
+  nodesGroup.add(cometHeadMesh);
+}
+
+function updateActiveCometTrail(elapsed: number) {
+  if (!cometTrailMesh || !cometTrailHaloMesh || !cometHeadPosAttr || !cometHeadMesh) return;
+
+  if (activeCometTargetPos) {
+    activeCometOpacity = THREE.MathUtils.lerp(activeCometOpacity, 1.0, 0.12);
+  } else {
+    activeCometOpacity = THREE.MathUtils.lerp(activeCometOpacity, 0.0, 0.12);
+  }
+
+  if (activeCometOpacity < 0.01) {
+    cometHeadMesh.visible = false;
+    for (let i = 0; i < ACTIVE_COMET_SEGMENTS; i++) {
+      cometTrailMesh.setMatrixAt(i, hiddenTrailMatrix);
+      cometTrailHaloMesh.setMatrixAt(i, hiddenTrailMatrix);
+    }
+    cometTrailMesh.instanceMatrix.needsUpdate = true;
+    cometTrailHaloMesh.instanceMatrix.needsUpdate = true;
+    return;
+  }
+
+  cometHeadMesh.visible = true;
+
+  const target = activeCometTargetPos || new THREE.Vector3(0, 0, 10);
+  const dir = target.clone().normalize();
+  const start = new THREE.Vector3(0, 0, 0);
+  const mid = start.clone().lerp(target, 0.5);
+  // Slight radial arc for majestic comet trail
+  mid.add(dir.clone().cross(UP).normalize().multiplyScalar(0.75));
+  const curve = new THREE.QuadraticBezierCurve3(start, mid, target);
+
+  const speed = 1.4;
+  const progress = (elapsed * speed) % 1.0;
+  const trailLength = 0.38;
+  const tailStartProgress = Math.max(0, progress - trailLength);
+  const trailSpan = progress - tailStartProgress;
+
+  // Set comet head position
+  curve.getPointAt(progress, trailEnd);
+  cometHeadPosAttr.setXYZ(0, trailEnd.x, trailEnd.y, trailEnd.z);
+  cometHeadPosAttr.needsUpdate = true;
+
+  const cometColor = new THREE.Color('#00ffc8');
+  const cometCyan = new THREE.Color('#00e5ff');
+
+  for (let segment = 0; segment < ACTIVE_COMET_SEGMENTS; segment++) {
+    const startProgress = tailStartProgress + (trailSpan * segment) / ACTIVE_COMET_SEGMENTS;
+    const endProgress = tailStartProgress + (trailSpan * (segment + 1)) / ACTIVE_COMET_SEGMENTS;
+
+    curve.getPointAt(startProgress, trailStart);
+    curve.getPointAt(endProgress, trailEnd);
+
+    trailDirection.subVectors(trailEnd, trailStart);
+    const length = trailDirection.length();
+
+    if (length < 0.001) {
+      cometTrailMesh.setMatrixAt(segment, hiddenTrailMatrix);
+      cometTrailHaloMesh.setMatrixAt(segment, hiddenTrailMatrix);
+      continue;
+    }
+
+    trailMidpoint.addVectors(trailStart, trailEnd).multiplyScalar(0.5);
+    trailRotation.setFromUnitVectors(UP, trailDirection.normalize());
+    const headStrength = (segment + 1) / ACTIVE_COMET_SEGMENTS;
+    trailScale.set(1.2 + headStrength * 0.8, length * 1.25, 1.2 + headStrength * 0.8);
+
+    trailMatrix.compose(trailMidpoint, trailRotation, trailScale);
+    cometTrailMesh.setMatrixAt(segment, trailMatrix);
+    cometTrailHaloMesh.setMatrixAt(segment, trailMatrix);
+
+    trailColor.copy(cometCyan).lerp(cometColor, headStrength);
+    cometTrailMesh.setColorAt(segment, trailColor);
+    cometTrailHaloMesh.setColorAt(segment, trailColor);
+  }
+
+  (cometTrailMesh.material as THREE.MeshBasicMaterial).opacity = activeCometOpacity;
+  (cometTrailHaloMesh.material as THREE.MeshBasicMaterial).opacity = activeCometOpacity * 0.45;
+
+  cometTrailMesh.instanceMatrix.needsUpdate = true;
+  cometTrailHaloMesh.instanceMatrix.needsUpdate = true;
+  if (cometTrailMesh.instanceColor) cometTrailMesh.instanceColor.needsUpdate = true;
+  if (cometTrailHaloMesh.instanceColor) cometTrailHaloMesh.instanceColor.needsUpdate = true;
+}
+
+export function setProjectHighlight(nodeModuleName: string | null, active: boolean) {
+  if (!nodeModuleName || !active) {
+    activeCometTargetPos = null;
+    projectVisualNodes.forEach((node) => {
+      node.circleMesh.scale.set(1.0, 1.0, 1.0);
+      (node.circleMesh.material as THREE.LineBasicMaterial).color.copy(node.hot ? BRIGHT : GOLD);
+      (node.circleMesh.material as THREE.LineBasicMaterial).opacity = node.hot ? 0.93 : 0.6;
+      node.labelElement.classList.remove('node-highlight');
+    });
+    return;
+  }
+
+  const query = nodeModuleName.toLowerCase();
+  let matchedNode: ProjectVisualNode | null = null;
+
+  for (const node of projectVisualNodes) {
+    const nameLower = node.name.toLowerCase();
+    const detailLower = node.detail.toLowerCase();
+    if (nameLower.includes(query) || query.includes(nameLower) || detailLower.includes(query) || query.includes(detailLower)) {
+      matchedNode = node;
+      break;
+    }
+  }
+
+  if (matchedNode) {
+    activeCometTargetPos = matchedNode.position;
+    projectVisualNodes.forEach((node) => {
+      if (node === matchedNode) {
+        node.circleMesh.scale.set(1.95, 1.95, 1.95);
+        (node.circleMesh.material as THREE.LineBasicMaterial).color.set('#00ffc8');
+        (node.circleMesh.material as THREE.LineBasicMaterial).opacity = 1.0;
+        node.labelElement.classList.add('node-highlight');
+      } else {
+        node.circleMesh.scale.set(1.0, 1.0, 1.0);
+        (node.circleMesh.material as THREE.LineBasicMaterial).color.copy(node.hot ? BRIGHT : GOLD);
+        (node.circleMesh.material as THREE.LineBasicMaterial).opacity = node.hot ? 0.93 : 0.6;
+        node.labelElement.classList.remove('node-highlight');
+      }
+    });
+  }
+}
 
 interface DataFlow {
   curve: THREE.QuadraticBezierCurve3;
@@ -295,12 +495,14 @@ function addCircle(position: THREE.Vector3, radius: number, hot: boolean) {
     const angle = (index / segments) * TAU;
     points.push(new THREE.Vector3(position.x + Math.cos(angle) * radius, position.y + Math.sin(angle) * radius, position.z));
   }
-  nodesGroup.add(new THREE.Line(
+  const circleMesh = new THREE.Line(
     new THREE.BufferGeometry().setFromPoints(points),
     new THREE.LineBasicMaterial({
       color: hot ? BRIGHT : GOLD, transparent: true, opacity: hot ? 0.93 : 0.6, blending: THREE.AdditiveBlending
     })
-  ));
+  );
+  nodesGroup.add(circleMesh);
+  return circleMesh;
 }
 
 function createDataFlow(start: THREE.Vector3, end: THREE.Vector3, index: number, bright = false) {
@@ -335,6 +537,7 @@ export function buildDynamicProjectNetwork(projectList: ProjectData[]) {
     nodesGroup.remove(obj);
   }
   nodeLabelElements.clear();
+  projectVisualNodes.length = 0;
   dataFlows.length = 0;
   dataPackets.length = 0;
   majorPulses.length = 0;
@@ -389,7 +592,7 @@ export function buildDynamicProjectNetwork(projectList: ProjectData[]) {
     nodePoints.push(project.position);
     nodeColors.push(project.hot ? BRIGHT : GOLD);
     nodeSizes.push(project.hot ? 4.5 : 2.5);
-    addCircle(project.position, project.hot ? 0.32 : 0.24, Boolean(project.hot));
+    const circleMesh = addCircle(project.position, project.hot ? 0.32 : 0.24, Boolean(project.hot));
 
     // CSS2D Floating Label with Real Project Name
     const label = document.createElement('div');
@@ -403,6 +606,15 @@ export function buildDynamicProjectNetwork(projectList: ProjectData[]) {
       new THREE.Vector3((Math.sign(project.position.x) || 1) * 0.36, project.position.y > 3.5 ? 0.22 : -0.15, 0)
     );
     nodesGroup.add(labelObject);
+
+    projectVisualNodes.push({
+      name: project.name,
+      detail: project.detail,
+      position: project.position,
+      circleMesh,
+      labelElement: label,
+      hot: Boolean(project.hot)
+    });
   });
 
   const geometry = new THREE.BufferGeometry();
@@ -410,7 +622,7 @@ export function buildDynamicProjectNetwork(projectList: ProjectData[]) {
   nodesGroup.add(new THREE.LineSegments(geometry, new THREE.LineBasicMaterial({
     color: GOLD, transparent: true, opacity: 0.38, blending: THREE.AdditiveBlending
   })));
-  addPointCloud(nodePoints, nodeColors, nodeSizes, 1.45, 1, nodesGroup);
+  addPointCloud(nodePoints, nodeColors, nodeSizes, 1.45, 1, nodesGroup, false);
 
   // Data Flows
   activeProjectNodes.forEach((project, index) => {
@@ -455,7 +667,7 @@ export function buildDynamicProjectNetwork(projectList: ProjectData[]) {
   flowGeo.setAttribute('aColor', new THREE.BufferAttribute(colors, 3));
   flowGeo.setAttribute('aSize', new THREE.BufferAttribute(sizes, 1));
   flowGeo.setAttribute('aPhase', new THREE.BufferAttribute(phases, 1));
-  nodesGroup.add(new THREE.Points(flowGeo, makePointMaterial(1.65, 1)));
+  nodesGroup.add(new THREE.Points(flowGeo, makePointMaterial(1.65, 1, false)));
 
   // Major Pulse Trails
   const trailCount = Math.min(dataFlows.length, 12);
@@ -505,7 +717,10 @@ export function buildDynamicProjectNetwork(projectList: ProjectData[]) {
   headGeometry.setAttribute('aColor', new THREE.BufferAttribute(headColors, 3));
   headGeometry.setAttribute('aSize', new THREE.BufferAttribute(headSizes, 1));
   headGeometry.setAttribute('aPhase', new THREE.BufferAttribute(headPhases, 1));
-  nodesGroup.add(new THREE.Points(headGeometry, makePointMaterial(2.2, 1)));
+  nodesGroup.add(new THREE.Points(headGeometry, makePointMaterial(2.2, 1, false)));
+
+  // Initialize Dedicated Active Project Comet Trail
+  initActiveCometTrail();
 
   // Trigger Stage 2 Bloom Expansion
   labelContainer.style.display = 'block';
@@ -647,15 +862,54 @@ function speakAgentText(text: string) {
   window.speechSynthesis.speak(utterance);
 }
 
+let currentNaturalAudio: HTMLAudioElement | null = null;
+
+function playNaturalAudio(base64Audio: string) {
+  if ('speechSynthesis' in window) {
+    window.speechSynthesis.cancel();
+  }
+  if (currentNaturalAudio) {
+    currentNaturalAudio.pause();
+  }
+
+  audioRecorder.setMuted(true);
+  updateStatusUI('speaking');
+
+  currentNaturalAudio = new Audio(`data:audio/mp3;base64,${base64Audio}`);
+  currentNaturalAudio.play().catch(console.warn);
+
+  const onEnded = () => {
+    updateVoiceMeter(0.0);
+    audioRecorder.setMuted(false);
+    if (sphereState === 'expanded') {
+      updateStatusUI('listening');
+    }
+  };
+
+  currentNaturalAudio.onended = onEnded;
+  currentNaturalAudio.onerror = onEnded;
+}
+
 function displaySubtitle(speaker: 'user' | 'agent', text: string, isFinal: boolean) {
   subtitleCard.classList.add('active');
   speakerBadge.className = `speaker-badge ${speaker}`;
   speakerBadge.innerText = speaker === 'user' ? 'USER SPEECH' : 'NEURAL CORE';
   subtitleText.innerText = text;
 
+  // Auto-detect project mentions in speech transcript
+  if (activeProjectNodes.length > 0) {
+    const textLower = text.toLowerCase();
+    for (const project of activeProjectNodes) {
+      if (textLower.includes(project.name.toLowerCase())) {
+        setProjectHighlight(project.name, true);
+        break;
+      }
+    }
+  }
+
   if (isFinal) {
     appendTranscriptHistory(speaker, text);
-    if (speaker === 'agent') {
+    if (speaker === 'agent' && !currentNaturalAudio) {
       speakAgentText(text);
     }
   }
@@ -681,20 +935,10 @@ wsClient.connect({
     updateStatusUI(state);
   },
   onNodeActive: (nodeModule) => {
-    const lower = nodeModule.toLowerCase();
-    for (const [key, el] of nodeLabelElements.entries()) {
-      if (key.includes(lower) || lower.includes(key)) {
-        el.classList.add('node-highlight');
-      }
-    }
+    setProjectHighlight(nodeModule, true);
   },
   onNodeIdle: (nodeModule) => {
-    const lower = nodeModule.toLowerCase();
-    for (const [key, el] of nodeLabelElements.entries()) {
-      if (key.includes(lower) || lower.includes(key)) {
-        el.classList.remove('node-highlight');
-      }
-    }
+    setProjectHighlight(nodeModule, false);
   },
   onProjectsLoaded: (projects) => {
     console.log('🌟 Dynamic User Projects loaded:', projects);
@@ -702,6 +946,9 @@ wsClient.connect({
   },
   onTranscript: (speaker, text, isFinal) => {
     displaySubtitle(speaker, text, isFinal);
+  },
+  onAudioStream: (base64Audio) => {
+    playNaturalAudio(base64Audio);
   }
 });
 
@@ -721,8 +968,11 @@ historyDrawer.addEventListener('click', (e) => {
 // Wake-up Screen Click Handlers
 window.addEventListener('click', () => {
   if (sphereState === 'compressed' || sphereState === 'compressing') {
-    // CLICK #1: WAKE UP NEURAL SYSTEM (Stage 1 Expansion)
+    // CLICK #1: WAKE UP NEURAL SYSTEM (Stage 1 Expansion - Concentric Spheres Bloom)
     sphereState = 'expanding';
+    nodesGroup.visible = false;
+    labelContainer.style.display = 'none';
+    nodesState = 'hidden';
     backgroundDust.visible = true;
     sphereShells.forEach((shell) => (shell.visible = true));
     if (startLabel) startLabel.classList.add('hidden');
@@ -843,6 +1093,7 @@ function animate() {
   });
 
   updateMajorPulseTrails(elapsed);
+  updateActiveCometTrail(elapsed);
 
   if (pulsePositionAttribute) {
     dataPackets.forEach((packet, index) => {

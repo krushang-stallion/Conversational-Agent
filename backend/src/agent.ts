@@ -83,37 +83,69 @@ export class SphereConversationalAgent {
       // --- STEP-BY-STEP AUTHENTICATION FLOW ---
       if (this.authStage === 'WAITING_FOR_PHONE') {
         const phoneDigits = userText.replace(/\D/g, '');
-        if (phoneDigits.length >= 7 || userText.length >= 6) {
-          this.userPhoneNumber = userText;
+        if (phoneDigits.length >= 7) {
+          this.userPhoneNumber = phoneDigits;
           this.authStage = 'WAITING_FOR_OTP';
 
-          // Call send_otp if tool exists
+          // Call send_otp with required Pydantic parameter name (mobile_number)
           try {
-            await this.mcpManager.executeTool('send_otp', { phone: this.userPhoneNumber });
+            const sendResult = await this.mcpManager.executeTool('send_otp', {
+              mobile_number: this.userPhoneNumber,
+              phone: this.userPhoneNumber
+            });
+            console.log('📲 send_otp response:', JSON.stringify(sendResult, null, 2));
           } catch (e) {}
 
-          responseText = `I have sent a one-time verification code to ${userText}. Please tell me the OTP to authenticate your session.`;
+          responseText = `I have sent a one-time verification code to ${this.userPhoneNumber}. Please tell me your OTP to authenticate your session.`;
         } else {
-          responseText = `Please provide your phone number so I can send a verification OTP to log you in.`;
+          responseText = `Please provide a valid numeric phone number so I can send a verification OTP to log you in.`;
         }
 
       } else if (this.authStage === 'WAITING_FOR_OTP') {
         const otpDigits = userText.replace(/\D/g, '');
-        // Verify OTP
-        try {
-          await this.mcpManager.executeTool('verify_otp', { phone: this.userPhoneNumber, otp: otpDigits || userText });
-        } catch (e) {}
+        if (otpDigits.length >= 4) {
+          let isVerified = false;
+          try {
+            console.log(`🔐 Executing verify_otp for mobile ${this.userPhoneNumber} with code ${otpDigits}...`);
+            const verifyResult = await this.mcpManager.executeTool('verify_otp', {
+              mobile_number: this.userPhoneNumber,
+              code: otpDigits,
+              phone: this.userPhoneNumber,
+              otp: otpDigits
+            });
+            console.log('🔐 verify_otp response:', JSON.stringify(verifyResult, null, 2));
 
-        this.authStage = 'AUTHENTICATED';
+            if (verifyResult && !verifyResult.isError) {
+              const textContent = (verifyResult.content?.[0]?.text || '').toLowerCase();
+              if (!textContent.includes('error') && !textContent.includes('invalid')) {
+                isVerified = true;
+              }
+            }
+          } catch (e: any) {
+            console.error('❌ verify_otp error:', e);
+          }
 
-        // Fetch User Projects from MCP for Dynamic 2nd Expansion
-        this.userProjects = await this.mcpManager.getUserProjects();
-        if (callbacks.onProjectsLoaded) {
-          callbacks.onProjectsLoaded(this.userProjects);
+          if (isVerified) {
+            this.authStage = 'AUTHENTICATED';
+            await new Promise(resolve => setTimeout(resolve, 800));
+
+            console.log(`📦 Calling get_user_projects after authentication completion...`);
+            this.userProjects = await this.mcpManager.getUserProjects({
+              mobile_number: this.userPhoneNumber,
+              phone: this.userPhoneNumber
+            });
+
+            if (callbacks.onProjectsLoaded && this.userProjects.length > 0) {
+              callbacks.onProjectsLoaded(this.userProjects);
+            }
+
+            responseText = `Login verified! I have mapped your active projects around the neural sphere. What would you like to check or execute?`;
+          } else {
+            responseText = `Authentication failed: The OTP code was not verified. Please state your OTP code again.`;
+          }
+        } else {
+          responseText = `Please state your 4-digit or 6-digit verification OTP code to log in.`;
         }
-
-        const projectNames = this.userProjects.map((p) => p.name).slice(0, 3).join(', ');
-        responseText = `Login verified! I have mapped your active projects around the neural sphere, including ${projectNames}. What would you like to check or execute?`;
 
       } else {
         // --- AUTHENTICATED NATURAL CONVERSATION & TOOL CALLING ---
@@ -123,6 +155,21 @@ export class SphereConversationalAgent {
           responseText = await this.executeGeminiTurn(userText, callbacks);
         } else {
           responseText = await this.executeSimulatedTurn(userText, callbacks);
+        }
+      }
+
+      // Generate OpenAI TTS Audio if OpenAI client is active
+      if (this.openaiClient && responseText && callbacks.onAudioChunk) {
+        try {
+          const mp3 = await this.openaiClient.audio.speech.create({
+            model: 'tts-1',
+            voice: 'nova',
+            input: responseText.replace(/[*_#`~[\]()]/g, '')
+          });
+          const buffer = Buffer.from(await mp3.arrayBuffer());
+          callbacks.onAudioChunk(buffer.toString('base64'));
+        } catch (ttsErr) {
+          console.warn('⚠️ OpenAI TTS audio generation error:', ttsErr);
         }
       }
 
