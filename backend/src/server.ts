@@ -115,15 +115,9 @@ wss.on('connection', (ws: WebSocket) => {
 
       switch (message.type) {
         case 'SESSION_START':
-          console.log('🚀 Session started by user click');
-          agent.resetSession();
-          sendEvent({ type: 'STATE_CHANGE', state: 'speaking' });
-          sendEvent({
-            type: 'TRANSCRIPT',
-            speaker: 'agent',
-            text: 'Welcome to the Neural Core. Please provide your phone number so I can send your login OTP.',
-            isFinal: true
-          });
+          console.log('🚀 Session started with token:', message.token ? '[TOKEN_PROVIDED]' : '[NO_TOKEN]');
+          const token = message.token || process.env.FALLBACK_JWT_TOKEN || '';
+          await agent.startSessionWithToken(token, callbacks);
           break;
 
         case 'SESSION_END':

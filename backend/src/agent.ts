@@ -3,7 +3,6 @@ import OpenAI from 'openai';
 import { MCPClientManager, ProjectInfo } from './mcpClient.js';
 
 export type AIState = 'idle' | 'listening' | 'thinking' | 'speaking';
-export type AuthStage = 'WAITING_FOR_PHONE' | 'WAITING_FOR_OTP' | 'AUTHENTICATED';
 
 export interface AgentCallbacks {
   onStateChange: (state: AIState) => void;
@@ -20,13 +19,11 @@ export class SphereConversationalAgent {
   private mcpManager: MCPClientManager;
   private conversationHistory: Array<{ role: 'user' | 'model' | 'assistant' | 'system'; content?: string; text?: string; parts?: Array<any> }> = [];
   private isProcessing = false;
-  private authStage: AuthStage = 'WAITING_FOR_PHONE';
-  private userPhoneNumber = '';
+  private jwtToken = '';
+  private userProfile: any = null;
   private userProjects: ProjectInfo[] = [];
 
   constructor(remoteMcpUrl?: string) {
-    const provider = process.env.LLM_PROVIDER || (process.env.OPENAI_API_KEY ? 'openai' : 'gemini');
-
     if (process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.startsWith('sk-')) {
       try {
         this.openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -53,12 +50,40 @@ export class SphereConversationalAgent {
     await this.mcpManager.initialize();
   }
 
-  public resetSession(): void {
+  public resetSession(token?: string): void {
     this.conversationHistory = [];
     this.isProcessing = false;
-    this.authStage = 'WAITING_FOR_PHONE';
-    this.userPhoneNumber = '';
+    this.jwtToken = token || '';
+    this.userProfile = null;
     this.userProjects = [];
+  }
+
+  /**
+   * Start session on click wake-up with JWT Token:
+   * Executes single initial tool call `get_user_profile` and loads project nodes.
+   */
+  public async startSessionWithToken(token: string, callbacks: AgentCallbacks): Promise<string> {
+    this.resetSession(token);
+    this.mcpManager.setJwtToken(token);
+
+    callbacks.onStateChange('thinking');
+    console.log('🚀 Session starting with single initial tool call: get_user_profile...');
+
+    const { profile, projects } = await this.mcpManager.loadUserProfileContext(token);
+    this.userProfile = profile;
+    this.userProjects = projects;
+
+    if (callbacks.onProjectsLoaded && this.userProjects.length > 0) {
+      callbacks.onProjectsLoaded(this.userProjects);
+    }
+
+    const userName = profile?.data?.name || profile?.user?.name || profile?.name || profile?.user_name || 'Valued User';
+    const welcomeText = `Welcome, ${userName}. Your authenticated profile is active and I have synchronized your dynamic project nodes around the neural sphere. What would you like to query or check today?`;
+
+    callbacks.onStateChange('speaking');
+    callbacks.onTranscript('agent', welcomeText, true);
+
+    return welcomeText;
   }
 
   /**
@@ -74,88 +99,16 @@ export class SphereConversationalAgent {
     try {
       const userText = (userInput.text || '').trim();
       callbacks.onTranscript('user', userText, true);
-
-      // Shift UI state to THINKING
       callbacks.onStateChange('thinking');
 
       let responseText = '';
 
-      // --- STEP-BY-STEP AUTHENTICATION FLOW ---
-      if (this.authStage === 'WAITING_FOR_PHONE') {
-        const phoneDigits = userText.replace(/\D/g, '');
-        if (phoneDigits.length >= 7) {
-          this.userPhoneNumber = phoneDigits;
-          this.authStage = 'WAITING_FOR_OTP';
-
-          // Call send_otp with required Pydantic parameter name (mobile_number)
-          try {
-            const sendResult = await this.mcpManager.executeTool('send_otp', {
-              mobile_number: this.userPhoneNumber,
-              phone: this.userPhoneNumber
-            });
-            console.log('📲 send_otp response:', JSON.stringify(sendResult, null, 2));
-          } catch (e) {}
-
-          responseText = `I have sent a one-time verification code to ${this.userPhoneNumber}. Please tell me your OTP to authenticate your session.`;
-        } else {
-          responseText = `Please provide a valid numeric phone number so I can send a verification OTP to log you in.`;
-        }
-
-      } else if (this.authStage === 'WAITING_FOR_OTP') {
-        const otpDigits = userText.replace(/\D/g, '');
-        if (otpDigits.length >= 4) {
-          let isVerified = false;
-          try {
-            console.log(`🔐 Executing verify_otp for mobile ${this.userPhoneNumber} with code ${otpDigits}...`);
-            const verifyResult = await this.mcpManager.executeTool('verify_otp', {
-              mobile_number: this.userPhoneNumber,
-              code: otpDigits,
-              phone: this.userPhoneNumber,
-              otp: otpDigits
-            });
-            console.log('🔐 verify_otp response:', JSON.stringify(verifyResult, null, 2));
-
-            if (verifyResult && !verifyResult.isError) {
-              const textContent = (verifyResult.content?.[0]?.text || '').toLowerCase();
-              if (!textContent.includes('error') && !textContent.includes('invalid')) {
-                isVerified = true;
-              }
-            }
-          } catch (e: any) {
-            console.error('❌ verify_otp error:', e);
-          }
-
-          if (isVerified) {
-            this.authStage = 'AUTHENTICATED';
-            await new Promise(resolve => setTimeout(resolve, 800));
-
-            console.log(`📦 Calling get_user_projects after authentication completion...`);
-            this.userProjects = await this.mcpManager.getUserProjects({
-              mobile_number: this.userPhoneNumber,
-              phone: this.userPhoneNumber
-            });
-
-            if (callbacks.onProjectsLoaded && this.userProjects.length > 0) {
-              callbacks.onProjectsLoaded(this.userProjects);
-            }
-
-            responseText = `Login verified! I have mapped your active projects around the neural sphere. What would you like to check or execute?`;
-          } else {
-            responseText = `Authentication failed: The OTP code was not verified. Please state your OTP code again.`;
-          }
-        } else {
-          responseText = `Please state your 4-digit or 6-digit verification OTP code to log in.`;
-        }
-
+      if (this.openaiClient && process.env.OPENAI_API_KEY) {
+        responseText = await this.executeOpenAITurn(userText, callbacks);
+      } else if (this.geminiClient && process.env.GEMINI_API_KEY) {
+        responseText = await this.executeGeminiTurn(userText, callbacks);
       } else {
-        // --- AUTHENTICATED NATURAL CONVERSATION & TOOL CALLING ---
-        if (this.openaiClient && process.env.OPENAI_API_KEY) {
-          responseText = await this.executeOpenAITurn(userText, callbacks);
-        } else if (this.geminiClient && process.env.GEMINI_API_KEY) {
-          responseText = await this.executeGeminiTurn(userText, callbacks);
-        } else {
-          responseText = await this.executeSimulatedTurn(userText, callbacks);
-        }
+        responseText = await this.executeSimulatedTurn(userText, callbacks);
       }
 
       // Generate OpenAI TTS Audio if OpenAI client is active
@@ -173,7 +126,6 @@ export class SphereConversationalAgent {
         }
       }
 
-      // Shift UI state to SPEAKING
       callbacks.onStateChange('speaking');
       callbacks.onTranscript('agent', responseText, true);
 
@@ -202,10 +154,10 @@ export class SphereConversationalAgent {
     }));
 
     const systemPrompt = `You are the AI Neural Core of an interactive 3D Sphere interface.
-The user is logged in. Active user projects: ${this.userProjects.map(p => p.name).join(', ')}.
-You have full access to remote MCP tools to fetch permissions, switch projects, and check records.
-When users ask about permissions, projects, or status, always invoke the appropriate tools.
-Provide concise, helpful, and vocal answers (2-4 sentences max).`;
+The user is logged in via JWT. Active assigned projects: ${this.userProjects.map(p => `${p.name} (ID: ${p.id})`).join(', ')}.
+You have full access to Stallion MCP tools: get_user_profile, get_project_details, get_project_towers, get_assigned_modules, get_developer_users, get_project_users, get_project_permissions, view_permission_document.
+When users ask about permissions, projects, towers, drawings, documents, or users, always invoke the appropriate tools.
+Provide concise, clear, and vocal answers (2-4 sentences max).`;
 
     const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
       { role: 'system', content: systemPrompt },
@@ -233,7 +185,8 @@ Provide concise, helpful, and vocal answers (2-4 sentences max).`;
           if (!fn) continue;
           const fnName = fn.name;
           const fnArgs = JSON.parse(fn.arguments || '{}');
-          const nodeModule = this.mcpManager.getNodeForTool(fnName);
+          if (this.jwtToken) fnArgs.jwt_token = this.jwtToken;
+          const nodeModule = this.mcpManager.getNodeForTool(fnName, fnArgs);
 
           callbacks.onNodeActive(nodeModule);
           const toolResult = await this.mcpManager.executeTool(fnName, fnArgs);
@@ -250,7 +203,7 @@ Provide concise, helpful, and vocal answers (2-4 sentences max).`;
       }
     }
 
-    return 'Processed through neural mesh.';
+    return 'Processed query through Stallion remote MCP mesh.';
   }
 
   private async executeGeminiTurn(userText: string, callbacks: AgentCallbacks): Promise<string> {
@@ -266,10 +219,10 @@ Provide concise, helpful, and vocal answers (2-4 sentences max).`;
     }));
 
     const systemInstruction = `You are the AI Neural Core of a real-time 3D Sphere interactive interface.
-The user is logged in. Active user projects: ${this.userProjects.map(p => p.name).join(', ')}.
-You have full access to remote MCP tools (e.g. get_project_permissions, get_user_projects, switch_project).
-When users ask about permissions, projects, users, databases, or status, always invoke the appropriate tools.
-Provide concise, helpful, and vocal answers (2-4 sentences max).`;
+The user is logged in via JWT. Active assigned projects: ${this.userProjects.map(p => `${p.name} (ID: ${p.id})`).join(', ')}.
+You have full access to Stallion remote MCP tools (get_user_profile, get_project_details, get_project_towers, get_assigned_modules, get_developer_users, get_project_users, get_project_permissions, view_permission_document).
+When users ask about permissions, projects, towers, drawings, documents, or status, always invoke the appropriate tools.
+Provide concise, clear, and vocal answers (2-4 sentences max).`;
 
     const modelName = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
 
@@ -308,10 +261,12 @@ Provide concise, helpful, and vocal answers (2-4 sentences max).`;
           functionCalls.map(async (part: any) => {
             const fc = part.functionCall!;
             const toolName = fc.name || 'get_project_permissions';
-            const nodeModule = this.mcpManager.getNodeForTool(toolName);
+            const fnArgs = (fc.args as Record<string, any>) || {};
+            if (this.jwtToken) fnArgs.jwt_token = this.jwtToken;
+            const nodeModule = this.mcpManager.getNodeForTool(toolName, fnArgs);
 
             callbacks.onNodeActive(nodeModule);
-            const toolResult = await this.mcpManager.executeTool(toolName, (fc.args as Record<string, any>) || {});
+            const toolResult = await this.mcpManager.executeTool(toolName, fnArgs);
             setTimeout(() => callbacks.onNodeIdle(nodeModule), 1200);
 
             return {
@@ -330,35 +285,35 @@ Provide concise, helpful, and vocal answers (2-4 sentences max).`;
           parts: toolResponses
         });
       } else {
-        return response.text || 'Neural task completed successfully.';
+        return response.text || 'Task completed successfully.';
       }
     }
 
-    return 'Processed multi-step tools across neural mesh.';
+    return 'Processed through Stallion remote MCP tools.';
   }
 
   private async executeSimulatedTurn(userText: string, callbacks: AgentCallbacks): Promise<string> {
     const lower = userText.toLowerCase();
-    const primaryProject = this.userProjects[0]?.name || 'Active Project';
-    const primaryId = this.userProjects[0]?.id || '101';
+    const primaryProject = this.userProjects[0]?.name || 'Sharda Project';
+    const primaryId = this.userProjects[0]?.id || '194';
 
-    // Find if user mentioned any specific project from their dynamic list
-    const matchedProject = this.userProjects.find(p => lower.includes(p.name.toLowerCase()));
+    const matchedProject = this.userProjects.find(p => lower.includes(p.name.toLowerCase()) || lower.includes(p.id));
     const targetProject = matchedProject ? matchedProject.name : primaryProject;
     const targetId = matchedProject ? matchedProject.id : primaryId;
 
-    if (lower.includes('permission') || lower.includes('project') || lower.includes('access')) {
+    if (lower.includes('permission') || lower.includes('drawing') || lower.includes('document')) {
       callbacks.onNodeActive(targetProject.toLowerCase());
       setTimeout(() => callbacks.onNodeIdle(targetProject.toLowerCase()), 1200);
-      return `For ${targetProject} (ID: ${targetId}), your account has Full Administrator privileges including Read, Write, Deploy Services, and Manage Access permissions.`;
+      return `For ${targetProject} (ID: ${targetId}), 1 approved permission document is available ('Last Approved Plan'). You can view the document drawing directly via the link in the permissions panel.`;
     }
 
-    if (lower.includes('switch') || lower.includes('select')) {
+    if (lower.includes('tower') || lower.includes('floor') || lower.includes('basement')) {
       callbacks.onNodeActive(targetProject.toLowerCase());
       setTimeout(() => callbacks.onNodeIdle(targetProject.toLowerCase()), 1200);
-      return `Switched active workspace context to ${targetProject}. All telemetry feeds and permissions are synchronized.`;
+      return `For ${targetProject} (ID: ${targetId}), retrieved tower metrics: 3 active towers with 24 total floors and 2 basement levels.`;
     }
 
-    return `Neural core synchronized for "${userText}". All ${this.userProjects.length || 0} dynamic project nodes are active and reachable.`;
+    return `Neural core synchronized for "${userText}". Active project nodes (${this.userProjects.map(p => p.name).join(', ')}) are connected via Stallion MCP.`;
   }
 }
+

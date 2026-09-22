@@ -126,8 +126,8 @@ export class AgentWSClient {
     }
   }
 
-  public startSession(): void {
-    this.send({ type: 'SESSION_START' });
+  public startSession(token?: string): void {
+    this.send({ type: 'SESSION_START', token });
   }
 
   public endSession(): void {

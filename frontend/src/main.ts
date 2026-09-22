@@ -1114,6 +1114,10 @@ historyDrawer.addEventListener('click', (e) => {
   e.stopPropagation();
 });
 
+// --- JWT TOKEN EXTRACTION FROM URL ---
+const urlParams = new URLSearchParams(window.location.search);
+const userJwtToken = urlParams.get('token') || urlParams.get('jwt') || urlParams.get('bearer') || '';
+
 // Wake-up Screen Click Handlers
 window.addEventListener('click', () => {
   if (sphereState === 'compressed' || sphereState === 'compressing') {
@@ -1129,7 +1133,7 @@ window.addEventListener('click', () => {
 
     // On wake up, microphone is unmuted by default
     setMuteUI(false);
-    wsClient.startSession();
+    wsClient.startSession(userJwtToken);
 
     // Open VAD Microphone Session
     audioRecorder.start({
