@@ -64,7 +64,7 @@ export class SphereConversationalAgent {
    */
   public async startSessionWithToken(token: string, callbacks: AgentCallbacks): Promise<string> {
     this.resetSession(token);
-    this.mcpManager.setJwtToken(token);
+    await this.mcpManager.setJwtToken(token);
 
     callbacks.onStateChange('thinking');
     console.log('🚀 Session starting with single initial tool call: get_user_profile...');
@@ -78,7 +78,9 @@ export class SphereConversationalAgent {
     }
 
     const userName = profile?.data?.name || profile?.user?.name || profile?.name || profile?.user_name || 'Valued User';
-    const welcomeText = `Welcome, ${userName}. Your authenticated profile is active and I have synchronized your dynamic project nodes around the neural sphere. What would you like to query or check today?`;
+    const welcomeText = this.userProjects.length > 0
+      ? `Welcome, ${userName}. Your authenticated profile is active and I have synchronized your dynamic project nodes around the neural sphere. What would you like to query or check today?`
+      : `Welcome, ${userName}. Your authenticated profile is active. How can I assist you with your projects today?`;
 
     callbacks.onStateChange('speaking');
     callbacks.onTranscript('agent', welcomeText, true);

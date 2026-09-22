@@ -133,8 +133,13 @@ export class MCPClientManager {
     this.sseUrl = sseUrl;
   }
 
-  public setJwtToken(token: string): void {
+  public async setJwtToken(token: string): Promise<void> {
+    const isNewToken = this.jwtToken !== token;
     this.jwtToken = token;
+    if (isNewToken || !this.isConnected) {
+      console.log('🔄 Connecting MCP Client with user JWT Token transport headers...');
+      await this.initialize();
+    }
   }
 
   public async initialize(): Promise<void> {
@@ -357,8 +362,9 @@ export class MCPClientManager {
 
   public async executeTool(name: string, args: Record<string, any> = {}): Promise<any> {
     const finalArgs = { ...args };
-    if (this.jwtToken && !finalArgs.jwt_token) {
-      finalArgs.jwt_token = this.jwtToken;
+    if (this.jwtToken) {
+      if (!finalArgs.jwt_token) finalArgs.jwt_token = this.jwtToken;
+      if (!finalArgs.token) finalArgs.token = this.jwtToken;
     }
 
     console.log(`⚡ Executing MCP Tool [${name}] with args:`, finalArgs);
@@ -376,7 +382,7 @@ export class MCPClientManager {
       }
     }
 
-    // Local simulated fallback responses
+    // Local simulated fallback responses (for offline sandbox testing)
     switch (name) {
       case 'get_user_profile':
         return {
@@ -387,7 +393,6 @@ export class MCPClientManager {
             name: "Amaan Ansari",
             mobile_no: "9136206454",
             email: "amaan@stallion.build",
-            company_name: "Amaan1580",
             role: "developer",
             projects: [
               { id: "238", name: "Anmol" },
@@ -402,14 +407,14 @@ export class MCPClientManager {
       case 'get_project_permissions':
         return {
           status: 'success',
-          project_id: finalArgs.project_id || '194',
+          project_id: finalArgs.project_id || '238',
           total_permissions: 2,
           permissions: [
             {
               id: '1038',
               name: 'Last Approved Plan',
               status: 'Issued',
-              view_url: `https://api.dev.batman.co.in/permissions/projects/${finalArgs.project_id || '194'}/1038/documents/946/view`
+              view_url: `https://api.dev.batman.co.in/permissions/projects/${finalArgs.project_id || '238'}/1038/documents/946/view`
             }
           ]
         };
@@ -423,90 +428,67 @@ export class MCPClientManager {
    * Single Initial Tool Call on Landing Wake-Up: Executes strictly `get_user_profile`
    */
   public async loadUserProfileContext(token: string): Promise<{ profile: any; projects: ProjectInfo[] }> {
-    this.jwtToken = token;
+    await this.setJwtToken(token);
     console.log('👤 Executing single initial tool call: get_user_profile...');
 
     try {
-      const result = await this.executeTool('get_user_profile', { jwt_token: token });
+      const result = await this.executeTool('get_user_profile', { jwt_token: token, token });
       console.log('👤 Raw get_user_profile MCP response:', JSON.stringify(result, null, 2));
 
       const extractedProjects: ProjectInfo[] = [];
-      let profileData: any = null;
+      let profileObj: any = null;
 
-      const processProjectItem = (p: any) => {
-        if (!p) return;
-        const name = String(p.name || p.project_name || p.title || p.label || (p.id ? `Project ${p.id}` : '')).trim();
-        if (!name) return;
-        const id = String(p.id || p.project_id || extractedProjects.length + 1);
-
-        // Deduplicate projects by ID or Name
-        if (!extractedProjects.some(existing => existing.id === id || existing.name === name.toUpperCase())) {
-          extractedProjects.push({
-            id,
-            name: name.toUpperCase(),
-            detail: `ID: ${id} / ACTIVE`,
-            hot: true
-          });
-        }
-      };
-
-      const scanForProjects = (obj: any) => {
-        if (!obj || typeof obj !== 'object') return;
-
-        // Direct projects or assigned_projects array
-        if (Array.isArray(obj.projects)) {
-          obj.projects.forEach(processProjectItem);
-        } else if (Array.isArray(obj.assigned_projects)) {
-          obj.assigned_projects.forEach(processProjectItem);
-        }
-
-        // Nested under obj.data object (matching exact Stallion response shape)
-        if (obj.data && typeof obj.data === 'object') {
-          if (Array.isArray(obj.data.projects)) {
-            obj.data.projects.forEach(processProjectItem);
-          } else if (Array.isArray(obj.data.assigned_projects)) {
-            obj.data.assigned_projects.forEach(processProjectItem);
-          } else if (Array.isArray(obj.data)) {
-            obj.data.forEach(processProjectItem);
-          }
-        }
-      };
-
+      // Extract JSON content from MCP result
       if (result && result.content && Array.isArray(result.content)) {
         for (const item of result.content) {
           if (item.type === 'text' && typeof item.text === 'string') {
             try {
-              const parsed = JSON.parse(item.text);
-              profileData = parsed;
-              scanForProjects(parsed);
+              profileObj = JSON.parse(item.text);
             } catch (jsonErr) {}
           }
         }
       }
 
-      if (result && typeof result === 'object') {
-        scanForProjects(result);
-        if (!profileData) profileData = result;
+      if (!profileObj && result && typeof result === 'object') {
+        profileObj = result;
       }
 
-      // Fallback projects if none found
-      if (extractedProjects.length === 0) {
-        extractedProjects.push(
-          { id: '238', name: 'ANMOL', detail: 'ID: 238 / ACTIVE', hot: true },
-          { id: '223', name: 'INFINITY CASTLE', detail: 'ID: 223 / ACTIVE', hot: true },
-          { id: '228', name: 'EMPIRE STATES', detail: 'ID: 228 / ACTIVE', hot: true }
-        );
+      const dataContainer = profileObj?.data || profileObj?.result || profileObj?.user || profileObj;
+
+      let rawProjects: any[] = [];
+      if (Array.isArray(dataContainer?.projects)) {
+        rawProjects = dataContainer.projects;
+      } else if (Array.isArray(profileObj?.projects)) {
+        rawProjects = profileObj.projects;
+      } else if (Array.isArray(profileObj?.assigned_projects)) {
+        rawProjects = profileObj.assigned_projects;
+      } else if (Array.isArray(dataContainer?.assigned_projects)) {
+        rawProjects = dataContainer.assigned_projects;
+      }
+
+      for (const p of rawProjects) {
+        if (!p) continue;
+        const name = String(p.name || p.project_name || p.title || p.label || '').trim();
+        if (!name) continue;
+        const id = String(p.id || p.project_id || extractedProjects.length + 1);
+
+        if (!extractedProjects.some(existing => existing.id === id)) {
+          extractedProjects.push({
+            id,
+            name: name,
+            detail: `ID: ${id} / ACTIVE`,
+            hot: true
+          });
+        }
       }
 
       console.log(`🌟 User profile loaded successfully. Extracted ${extractedProjects.length} dynamic projects:`, extractedProjects.map(p => p.name).join(', '));
-      return { profile: profileData, projects: extractedProjects };
+      return { profile: profileObj, projects: extractedProjects };
     } catch (err) {
       console.error('❌ Error executing get_user_profile tool:', err);
       return {
         profile: null,
-        projects: [
-          { id: '238', name: 'ANMOL', detail: 'ID: 238 / ACTIVE', hot: true }
-        ]
+        projects: []
       };
     }
   }
