@@ -13,6 +13,20 @@ export interface AgentCallbacks {
   onAudioChunk?: (base64Audio: string) => void;
 }
 
+function sanitizeToolResult(result: any, maxLen = 6000): string {
+  if (!result) return JSON.stringify({ status: 'empty' });
+  let str = typeof result === 'string' ? result : JSON.stringify(result);
+
+  // Strip massive inline base64 images / data URLs
+  str = str.replace(/data:image\/[a-zA-Z]+;base64,[^"'\s\\]+/g, '[BASE64_IMAGE]');
+  str = str.replace(/data:application\/[a-zA-Z]+;base64,[^"'\s\\]+/g, '[BASE64_DOC]');
+
+  if (str.length > maxLen) {
+    str = str.substring(0, maxLen) + '... [TRUNCATED_FOR_CONTEXT_LIMIT]';
+  }
+  return str;
+}
+
 export class SphereConversationalAgent {
   private geminiClient: GoogleGenAI | null = null;
   private openaiClient: OpenAI | null = null;
@@ -113,6 +127,15 @@ export class SphereConversationalAgent {
         responseText = await this.executeSimulatedTurn(userText, callbacks);
       }
 
+      // Record clean turn history and prune old turns to prevent token overflow
+      if (responseText) {
+        this.conversationHistory.push({ role: 'user', content: userText });
+        this.conversationHistory.push({ role: 'assistant', content: responseText });
+        if (this.conversationHistory.length > 8) {
+          this.conversationHistory = this.conversationHistory.slice(-8);
+        }
+      }
+
       // Generate OpenAI TTS Audio if OpenAI client is active
       if (this.openaiClient && responseText && callbacks.onAudioChunk) {
         try {
@@ -161,9 +184,12 @@ You have full access to Stallion MCP tools: get_user_profile, get_project_detail
 When users ask about permissions, projects, towers, drawings, documents, or users, always invoke the appropriate tools.
 Provide concise, clear, and vocal answers (2-4 sentences max).`;
 
+    // Only include recent context turns
+    const recentHistory = this.conversationHistory.slice(-6);
+
     const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
       { role: 'system', content: systemPrompt },
-      ...this.conversationHistory.map((h: any) => ({
+      ...recentHistory.map((h: any) => ({
         role: h.role === 'model' ? 'assistant' : h.role,
         content: h.text || h.content || ''
       })),
@@ -197,7 +223,7 @@ Provide concise, clear, and vocal answers (2-4 sentences max).`;
           messages.push({
             role: 'tool',
             tool_call_id: toolCall.id,
-            content: JSON.stringify(toolResult)
+            content: sanitizeToolResult(toolResult)
           });
         }
       } else {
