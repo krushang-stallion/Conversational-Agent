@@ -951,75 +951,10 @@ function updateVoiceMeter(level: number) {
 }
 
 let speechMeterInterval: any = null;
-
-function speakAgentText(text: string) {
-  if (!('speechSynthesis' in window)) return;
-
-  window.speechSynthesis.cancel();
-
-  const cleanText = text.replace(/[*_#`~[\]()]/g, '').trim();
-  if (!cleanText) return;
-
-  const utterance = new SpeechSynthesisUtterance(cleanText);
-  utterance.rate = 1.05;
-  utterance.pitch = 1.0;
-
-  const voices = window.speechSynthesis.getVoices();
-  const naturalVoice = voices.find((v) =>
-    v.name.includes('Natural') || v.name.includes('Google') || v.name.includes('Samantha') || v.lang.startsWith('en')
-  );
-  if (naturalVoice) {
-    utterance.voice = naturalVoice;
-  }
-
-  audioRecorder.setMuted(true);
-
-  utterance.onstart = () => {
-    updateStatusUI('speaking');
-    let t = 0;
-    clearInterval(speechMeterInterval);
-    speechMeterInterval = setInterval(() => {
-      t += 0.2;
-      const simLevel = 0.2 + Math.sin(t * 2.0) * 0.08 + Math.random() * 0.04;
-      updateVoiceMeter(simLevel);
-    }, 50);
-  };
-
-  const onFinish = () => {
-    clearInterval(speechMeterInterval);
-    updateVoiceMeter(0.0);
-    audioRecorder.setMuted(false);
-    if (sphereState === 'expanded') {
-      updateStatusUI('listening');
-    }
-  };
-
-  utterance.onend = onFinish;
-  utterance.onerror = onFinish;
-
-  window.speechSynthesis.speak(utterance);
-}
-
 let currentNaturalAudio: HTMLAudioElement | null = null;
-let serverAudioReceived = false;
-let fallbackSpeechTimeout: any = null;
-
-function handleAgentSpeech(text: string) {
-  serverAudioReceived = false;
-  clearTimeout(fallbackSpeechTimeout);
-
-  // Grace period to let server natural audio arrive before using browser speech synthesis fallback
-  fallbackSpeechTimeout = setTimeout(() => {
-    if (!serverAudioReceived && !currentNaturalAudio) {
-      speakAgentText(text);
-    }
-  }, 1200);
-}
 
 function playNaturalAudio(base64Audio: string) {
-  serverAudioReceived = true;
-  clearTimeout(fallbackSpeechTimeout);
-
+  // Ensure default browser speech synthesis is permanently silenced
   if ('speechSynthesis' in window) {
     window.speechSynthesis.cancel();
   }
@@ -1031,10 +966,20 @@ function playNaturalAudio(base64Audio: string) {
   audioRecorder.setMuted(true);
   updateStatusUI('speaking');
 
+  // Animate the voice meter and 3D sphere reaction while neural voice plays
+  let t = 0;
+  clearInterval(speechMeterInterval);
+  speechMeterInterval = setInterval(() => {
+    t += 0.2;
+    const simLevel = 0.25 + Math.sin(t * 2.0) * 0.12 + Math.random() * 0.05;
+    updateVoiceMeter(simLevel);
+  }, 50);
+
   currentNaturalAudio = new Audio(`data:audio/mp3;base64,${base64Audio}`);
   currentNaturalAudio.play().catch(console.warn);
 
   const onEnded = () => {
+    clearInterval(speechMeterInterval);
     updateVoiceMeter(0.0);
     audioRecorder.setMuted(false);
     currentNaturalAudio = null;
@@ -1077,9 +1022,6 @@ function displaySubtitle(speaker: 'user' | 'agent', text: string, isFinal: boole
 
   if (isFinal) {
     appendTranscriptHistory(speaker, text);
-    if (speaker === 'agent') {
-      handleAgentSpeech(text);
-    }
   }
 }
 
