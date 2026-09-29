@@ -13,9 +13,12 @@ export class AudioRecorder {
   private animFrameId: number | null = null;
   private isRunning = false;
   private isMuted = false;
+  private isRecognitionActive = false;
   private callbacks: AudioRecorderCallbacks = {};
   private finalTranscriptBuffer = '';
+  private currentInterimBuffer = '';
   private silenceTimer: any = null;
+  private restartTimer: any = null;
 
   constructor() {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -27,30 +30,15 @@ export class AudioRecorder {
     }
   }
 
-  private muteCooldownTimer: any = null;
-
   public setMuted(muted: boolean): void {
     this.isMuted = muted;
     clearTimeout(this.silenceTimer);
-    clearTimeout(this.muteCooldownTimer);
     this.finalTranscriptBuffer = '';
+    this.currentInterimBuffer = '';
 
-    if (muted) {
-      if (this.recognition) {
-        try {
-          this.recognition.abort();
-        } catch (e) {}
-      }
-    } else {
-      // Small cooldown delay when unmuting to ignore audio echoing right as TTS stops
-      this.muteCooldownTimer = setTimeout(() => {
-        this.finalTranscriptBuffer = '';
-        if (this.isRunning && this.recognition) {
-          try {
-            this.recognition.start();
-          } catch (e) {}
-        }
-      }, 400);
+    // If unmuting and recognition is running but inactive, ensure it is active
+    if (!muted && this.isRunning && this.recognition && !this.isRecognitionActive) {
+      this.safeStartRecognition();
     }
   }
 
@@ -64,6 +52,7 @@ export class AudioRecorder {
     this.isRunning = true;
     this.isMuted = false;
     this.finalTranscriptBuffer = '';
+    this.currentInterimBuffer = '';
 
     // 1. Microphone & Analyser
     try {
@@ -86,10 +75,19 @@ export class AudioRecorder {
     // 2. Start Speech Recognition
     if (this.recognition) {
       this.setupRecognition();
-      try {
-        this.recognition.start();
-      } catch (e) {
-        console.warn('SpeechRecognition start error:', e);
+      this.safeStartRecognition();
+    }
+  }
+
+  private safeStartRecognition() {
+    if (!this.recognition || !this.isRunning || this.isRecognitionActive) return;
+    try {
+      this.recognition.start();
+      this.isRecognitionActive = true;
+    } catch (e: any) {
+      // If recognition is already started, keep active flag in sync
+      if (e?.name === 'InvalidStateError') {
+        this.isRecognitionActive = true;
       }
     }
   }
@@ -98,6 +96,7 @@ export class AudioRecorder {
     if (!this.recognition) return;
 
     this.recognition.onstart = () => {
+      this.isRecognitionActive = true;
       console.log('🎤 Speech recognition listening');
     };
 
@@ -125,22 +124,24 @@ export class AudioRecorder {
       if (newlyFinalized.trim()) {
         this.finalTranscriptBuffer = (this.finalTranscriptBuffer + ' ' + newlyFinalized).trim();
       }
+      this.currentInterimBuffer = currentInterim.trim();
 
-      const displayText = (this.finalTranscriptBuffer + ' ' + currentInterim).trim();
+      const displayText = (this.finalTranscriptBuffer + ' ' + this.currentInterimBuffer).trim();
 
       if (displayText && this.callbacks.onSpeechResult) {
-        // Show live interim text
+        // Show live interim text in subtitle box
         this.callbacks.onSpeechResult(displayText, false);
 
         // Reset silence debouncer to dispatch complete thought
         clearTimeout(this.silenceTimer);
+        const textToDispatch = displayText;
         this.silenceTimer = setTimeout(() => {
-          if (this.finalTranscriptBuffer.trim() && this.callbacks.onSpeechResult) {
-            const completedPrompt = this.finalTranscriptBuffer.trim();
+          if (textToDispatch && this.callbacks.onSpeechResult) {
             this.finalTranscriptBuffer = '';
-            this.callbacks.onSpeechResult(completedPrompt, true);
+            this.currentInterimBuffer = '';
+            this.callbacks.onSpeechResult(textToDispatch, true);
           }
-        }, 750);
+        }, 800);
       }
     };
 
@@ -148,13 +149,22 @@ export class AudioRecorder {
       if (event.error !== 'no-speech') {
         console.warn('Speech recognition warning:', event.error);
       }
+      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+        this.isRunning = false;
+        this.isRecognitionActive = false;
+      }
     };
 
     this.recognition.onend = () => {
+      this.isRecognitionActive = false;
+      clearTimeout(this.restartTimer);
       if (this.isRunning) {
-        try {
-          this.recognition.start();
-        } catch (e) {}
+        // Automatically restart speech recognition after brief pause
+        this.restartTimer = setTimeout(() => {
+          if (this.isRunning && !this.isRecognitionActive) {
+            this.safeStartRecognition();
+          }
+        }, 150);
       }
     };
   }
@@ -176,6 +186,8 @@ export class AudioRecorder {
 
       if (!this.isMuted && this.callbacks.onAudioLevel) {
         this.callbacks.onAudioLevel(normalizedLevel);
+      } else if (this.isMuted && this.callbacks.onAudioLevel) {
+        this.callbacks.onAudioLevel(0);
       }
 
       this.animFrameId = requestAnimationFrame(checkVolume);
@@ -187,8 +199,11 @@ export class AudioRecorder {
   public stop(): void {
     this.isRunning = false;
     this.isMuted = false;
+    this.isRecognitionActive = false;
     clearTimeout(this.silenceTimer);
+    clearTimeout(this.restartTimer);
     this.finalTranscriptBuffer = '';
+    this.currentInterimBuffer = '';
 
     if (this.recognition) {
       try {
@@ -216,3 +231,4 @@ export class AudioRecorder {
     return this.isRunning;
   }
 }
+

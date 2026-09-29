@@ -965,7 +965,7 @@ function stopAndClearAudioQueue() {
     currentNaturalAudio.pause();
     currentNaturalAudio = null;
   }
-  audioRecorder.setMuted(false);
+  audioRecorder.setMuted(isUserMuted);
   if (sphereState === 'expanded') {
     updateStatusUI('listening');
   }
@@ -988,7 +988,7 @@ function playNextAudioInQueue() {
     isPlayingAudio = false;
     clearInterval(speechMeterInterval);
     updateVoiceMeter(0.0);
-    audioRecorder.setMuted(false);
+    audioRecorder.setMuted(isUserMuted);
     currentNaturalAudio = null;
     if (sphereState === 'expanded') {
       updateStatusUI('listening');
