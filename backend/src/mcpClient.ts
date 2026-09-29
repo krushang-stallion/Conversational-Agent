@@ -495,14 +495,33 @@ export class MCPClientManager {
 
     console.log(`⚡ Executing MCP Tool [${name}] with args:`, finalArgs);
 
-    if (name === 'inspect_document_attachment') {
-      const docUrl = String(finalArgs.ai_view_url || finalArgs.document_url || finalArgs.url || '');
-      return extractPdfTextFromUrl(docUrl, this.jwtToken);
-    }
+    if (name === 'inspect_document_attachment' || name === 'view_permission_document') {
+      let docUrl = String(finalArgs.ai_view_url || finalArgs.document_url || finalArgs.url || '');
 
-    if (name === 'view_permission_document') {
-      if (finalArgs.ai_view_url || finalArgs.document_url || finalArgs.url) {
-        const docUrl = String(finalArgs.ai_view_url || finalArgs.document_url || finalArgs.url);
+      // Auto-resolution fallback: if no direct URL was passed, lookup from project permissions
+      if (!docUrl && (finalArgs.permission_name || finalArgs.permission_id || finalArgs.file_id)) {
+        try {
+          const projectId = finalArgs.project_id || '257';
+          const permsResult: any = await this.executeTool('get_project_permissions', { project_id: projectId });
+          const permsList = permsResult?.permissions || permsResult?.data?.permissions || (Array.isArray(permsResult) ? permsResult : []);
+          
+          const targetPerm = permsList.find((p: any) => {
+            if (finalArgs.permission_id && String(p.id) === String(finalArgs.permission_id)) return true;
+            if (finalArgs.permission_name && p.name && p.name.toLowerCase().includes(String(finalArgs.permission_name).toLowerCase())) return true;
+            return false;
+          });
+
+          if (targetPerm?.ai_view_url) {
+            docUrl = targetPerm.ai_view_url;
+          } else if (targetPerm?.documents?.permission_plan?.[0]?.ai_view_url) {
+            docUrl = targetPerm.documents.permission_plan[0].ai_view_url;
+          }
+        } catch (lookupErr) {
+          console.warn('⚠️ Could not auto-resolve document URL from permissions:', lookupErr);
+        }
+      }
+
+      if (docUrl) {
         return extractPdfTextFromUrl(docUrl, this.jwtToken);
       }
     }

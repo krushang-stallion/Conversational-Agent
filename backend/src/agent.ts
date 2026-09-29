@@ -536,11 +536,11 @@ When auditing project permissions:
 
 ### 🔍 INSPECTING APPROVAL DOCUMENTS & PDFS
 When asked to read, inspect, check conditions, or summarize an approval document (e.g. CFO NOC, IOD, LOI, CC, NOC, Approval Plan):
-- In `get_project_permissions`, every permission includes the direct `ai_view_url` parameter.
-- `ai_view_url` is a direct pre-signed Amazon S3 URL that requires ZERO authentication and is universally readable.
-- Call `inspect_document_attachment(ai_view_url="<ai_view_url>")` with that URL to extract the full text and clauses.
-- NEVER claim there are 'authorisation issues' or that credentials/tokens failed. `ai_view_url` is pre-authorized by Stallion.
-- NEVER call `view_permission_document` when you need to read or analyze document text—always call `inspect_document_attachment`.
+- In \`get_project_permissions\`, every permission includes the direct \`ai_view_url\` parameter.
+- \`ai_view_url\` is a direct pre-signed Amazon S3 URL that requires ZERO authentication and is universally readable.
+- Call \`inspect_document_attachment(ai_view_url="<ai_view_url>")\` with that URL to extract the full text and clauses.
+- NEVER claim there are 'authorisation issues' or that credentials/tokens failed. \`ai_view_url\` is pre-authorized by Stallion.
+- NEVER call \`view_permission_document\` when you need to read or analyze document text—always call \`inspect_document_attachment\`.
 - Extract and quote the specific conditions, clearance clauses, dates, and requirements directly from the document content.
 
 ---
