@@ -142,6 +142,57 @@ function dedicatedFetch(url: string | URL, init?: any): Promise<Response> {
   });
 }
 
+async function extractPdfTextFromUrl(docUrl: string): Promise<any> {
+  const lowerUrl = docUrl.toLowerCase();
+  if (lowerUrl.endsWith('.dwg') || lowerUrl.includes('.dwg?')) {
+    return {
+      status: 'cad_binary',
+      file_type: 'dwg',
+      message: 'AutoCAD DWG file. CAD vector files cannot be parsed as plain text. View directly in AutoCAD or Stallion Blueprint Viewer.',
+      direct_url: docUrl
+    };
+  }
+
+  try {
+    const resp = await dedicatedFetch(docUrl);
+    if (!resp.ok) {
+      return { status: 'error', message: `HTTP fetch failed: ${resp.status} ${resp.statusText}`, direct_url: docUrl };
+    }
+    const ab = await resp.arrayBuffer();
+    const pdfParseMod = await import('pdf-parse');
+    const PDFParse = (pdfParseMod as any).PDFParse || (pdfParseMod as any).default?.PDFParse || (pdfParseMod as any).default;
+    const parser = new PDFParse(new Uint8Array(ab));
+    await parser.load();
+    const parsed = await parser.getText();
+    const rawText = parsed.text || '';
+    const totalPages = parsed.total || (parsed.pages ? parsed.pages.length : 1);
+
+    if (rawText.trim().length === 0) {
+      return {
+        status: 'scanned_image_pdf',
+        total_pages: totalPages,
+        message: 'This PDF consists of scanned image pages without a digital text layer. Visual inspection of the physical scan via the direct link is required.',
+        direct_url: docUrl
+      };
+    }
+
+    const truncated = rawText.length > 10000;
+    const content = truncated ? rawText.slice(0, 10000) + '\n... [TRUNCATED FOR CONTEXT WINDOW]' : rawText;
+
+    return {
+      status: 'success',
+      total_pages: totalPages,
+      characters_extracted: rawText.length,
+      truncated,
+      extracted_content: content,
+      direct_url: docUrl
+    };
+  } catch (err: any) {
+    console.error('Error parsing PDF in extractPdfTextFromUrl:', err);
+    return { status: 'error', message: `Failed to extract PDF text: ${err?.message || err}`, direct_url: docUrl };
+  }
+}
+
 class ResilientSSEClientTransport extends SSEClientTransport {
   constructor(url: URL, opts?: any) {
     super(url, { ...opts, fetch: dedicatedFetch });
@@ -426,21 +477,8 @@ export class MCPClientManager {
     console.log(`⚡ Executing MCP Tool [${name}] with args:`, finalArgs);
 
     if (name === 'inspect_document_attachment') {
-      const docUrl = finalArgs.document_url || '';
-      const scriptPath = getScriptPath('read_document_attachment.py');
-      return new Promise((resolve) => {
-        execFile('python3', [scriptPath, docUrl], { maxBuffer: 10 * 1024 * 1024 }, (err, stdout) => {
-          if (err) {
-            resolve({ error: err.message, status: 'error' });
-            return;
-          }
-          try {
-            resolve(JSON.parse(stdout));
-          } catch {
-            resolve({ output: stdout });
-          }
-        });
-      });
+      const docUrl = String(finalArgs.document_url || '');
+      return extractPdfTextFromUrl(docUrl);
     }
 
     if (name === 'draft_permission_followup') {
