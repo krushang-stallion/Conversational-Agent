@@ -262,7 +262,7 @@ export class MCPClientManager {
             name: t.name,
             description: t.description,
             parameters: {
-              type: 'OBJECT',
+              type: 'object',
               properties: t.inputSchema?.properties || {},
               required: (t.inputSchema?.required as string[]) || [],
             }
@@ -282,14 +282,14 @@ export class MCPClientManager {
       {
         name: 'get_user_profile',
         description: 'Retrieve authenticated user profile, designation & role.',
-        parameters: { type: 'OBJECT', properties: { jwt_token: { type: 'STRING' } } }
+        parameters: { type: 'object', properties: { jwt_token: { type: 'string' } } }
       },
       {
         name: 'get_project_details',
         description: 'Retrieve comprehensive specs, location & developer metadata.',
         parameters: {
-          type: 'OBJECT',
-          properties: { project_id: { type: 'STRING' }, jwt_token: { type: 'STRING' } },
+          type: 'object',
+          properties: { project_id: { type: 'string' }, jwt_token: { type: 'string' } },
           required: ['project_id']
         }
       },
@@ -297,22 +297,22 @@ export class MCPClientManager {
         name: 'get_project_towers',
         description: 'Retrieve tower list, floor count & basement metrics.',
         parameters: {
-          type: 'OBJECT',
-          properties: { project_id: { type: 'STRING' }, jwt_token: { type: 'STRING' } },
+          type: 'object',
+          properties: { project_id: { type: 'string' }, jwt_token: { type: 'string' } },
           required: ['project_id']
         }
       },
       {
         name: 'get_assigned_modules',
         description: 'Retrieve licensed modules assigned for current context.',
-        parameters: { type: 'OBJECT', properties: { jwt_token: { type: 'STRING' } } }
+        parameters: { type: 'object', properties: { jwt_token: { type: 'string' } } }
       },
       {
         name: 'get_developer_users',
         description: 'Retrieve list of employees & users for a developer account.',
         parameters: {
-          type: 'OBJECT',
-          properties: { parent_developer_id: { type: 'STRING' }, jwt_token: { type: 'STRING' } },
+          type: 'object',
+          properties: { parent_developer_id: { type: 'string' }, jwt_token: { type: 'string' } },
           required: ['parent_developer_id']
         }
       },
@@ -320,8 +320,8 @@ export class MCPClientManager {
         name: 'get_project_users',
         description: 'Retrieve users assigned to a specific project.',
         parameters: {
-          type: 'OBJECT',
-          properties: { project_id: { type: 'STRING' }, jwt_token: { type: 'STRING' } },
+          type: 'object',
+          properties: { project_id: { type: 'string' }, jwt_token: { type: 'string' } },
           required: ['project_id']
         }
       },
@@ -329,8 +329,8 @@ export class MCPClientManager {
         name: 'get_project_permissions',
         description: 'Retrieve project permissions, status, attachments & LOD documents with full view URLs.',
         parameters: {
-          type: 'OBJECT',
-          properties: { project_id: { type: 'STRING' }, jwt_token: { type: 'STRING' } },
+          type: 'object',
+          properties: { project_id: { type: 'string' }, jwt_token: { type: 'string' } },
           required: ['project_id']
         }
       },
@@ -338,12 +338,12 @@ export class MCPClientManager {
         name: 'view_permission_document',
         description: 'Retrieve view URL reference or metadata for drawing/document files.',
         parameters: {
-          type: 'OBJECT',
+          type: 'object',
           properties: {
-            project_id: { type: 'STRING' },
-            trans_project_per_id: { type: 'STRING' },
-            file_id: { type: 'STRING' },
-            jwt_token: { type: 'STRING' }
+            project_id: { type: 'string' },
+            trans_project_per_id: { type: 'string' },
+            file_id: { type: 'string' },
+            jwt_token: { type: 'string' }
           },
           required: ['project_id', 'trans_project_per_id', 'file_id']
         }

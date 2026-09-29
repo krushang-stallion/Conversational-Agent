@@ -148,6 +148,14 @@ export class SphereConversationalAgent {
         return;
       }
 
+      // Normalize common speech recognition mis-transcriptions for Indian municipal terms
+      userText = userText
+        .replace(/\biodine\b/gi, 'IOD')
+        .replace(/\bce\s*ce\b/gi, 'CC')
+        .replace(/\boh\s*see\b/gi, 'OC')
+        .replace(/\bc\s*f\s*o\b/gi, 'CFO')
+        .replace(/\bn\s*o\s*c\b/gi, 'NOC');
+
       callbacks.onTranscript('user', userText, true);
       callbacks.onStateChange('thinking');
 
@@ -362,12 +370,37 @@ export class SphereConversationalAgent {
   }
 
   /**
+   * Helper to normalize any tool parameter schema to lowercase types required by OpenAI API
+   */
+  private normalizeJsonSchema(schema: any): any {
+    if (!schema || typeof schema !== 'object') return schema;
+    if (Array.isArray(schema)) return schema.map(s => this.normalizeJsonSchema(s));
+
+    const normalized: any = {};
+    for (const [key, value] of Object.entries(schema)) {
+      if (key === 'type' && typeof value === 'string') {
+        normalized[key] = value.toLowerCase();
+      } else if (typeof value === 'object' && value !== null) {
+        normalized[key] = this.normalizeJsonSchema(value);
+      } else {
+        normalized[key] = value;
+      }
+    }
+    if (!normalized.type) {
+      normalized.type = 'object';
+    }
+    return normalized;
+  }
+
+  /**
    * Autonomous Cloud Agent Loop: Executes directly on Render using OpenAI GPT-4o and Stallion MCP
    */
   private async executeOpenAIAgentTurn(userPrompt: string, callbacks: AgentCallbacks): Promise<string> {
     if (!this.openaiClient) {
-      console.warn('⚠️ OpenAI Client not configured for cloud turn, falling back to simulated insight.');
-      return this.generateSimulatedInsight(userPrompt);
+      console.warn('⚠️ OpenAI Client not configured (missing OPENAI_API_KEY). Set it in Render Environment.');
+      return `### Stallion Permission Intelligence
+⚠️ **OpenAI API Key Missing**: The cloud agent requires \`OPENAI_API_KEY\` to be set in your Render Dashboard under **Environment**.
+Mapped Projects: ${this.userProjects.map(p => p.name).join(', ') || 'Connected'}.`;
     }
 
     try {
@@ -378,20 +411,26 @@ export class SphereConversationalAgent {
         function: {
           name: t.name,
           description: t.description || '',
-          parameters: t.parameters || { type: 'object', properties: {} }
+          parameters: this.normalizeJsonSchema(t.parameters || { type: 'object', properties: {} })
         }
       }));
+
+      const activeProjectContext = this.userProjects.length > 0
+        ? `\nActive User Projects: ${this.userProjects.map(p => `Project Name: "${p.name}", ID: "${p.id}"`).join('; ')}`
+        : '';
 
       const messages: any[] = [
         {
           role: 'system',
           content: `You are the Stallion Strategic Permission & Compliance Specialist.
-Your mission is focused on Real Estate Permissions, Municipal Approvals, and Compliance Governance.
-Always cross-reference permissions using get_project_permissions.
-Extract condition clauses (e.g. CFO NOC, IOD condition 23, Before further CC).
-Flag missing clearances and suggest responsible roles.
+Your mission is focused on Real Estate Permissions, Municipal Approvals, and Compliance Governance.${activeProjectContext}
+When asked about project permissions, LOD documents, or IOD conditions:
+- Always call get_project_permissions using the target project_id (e.g. from the active project list above).
+- Inspect the returned permission records and attached S3 documents (ai_view_url).
+- Extract condition clauses (e.g. CFO NOC, IOD condition 23, Before further CC).
+- Flag missing clearances and suggest responsible roles.
 When drafting follow-ups:
-- Check assigned person, due timestamp, and blocking stage.
+- Check assigned person, due timestamp (e.g. 11:45 PM), and blocking stage.
 - STRICT GUARDRAIL: State clearly: 'Follow-up reminder drafted. Do NOT send automatically. User approval required before dispatch.'
 Synthesize all findings into clean, readable executive briefings.`
         },
@@ -429,10 +468,15 @@ Synthesize all findings into clean, readable executive briefings.`
             toolArgs.jwt_token = this.jwtToken;
           }
 
+          // If project_id is missing from args but user has active projects, default to first project
+          if (!toolArgs.project_id && this.userProjects.length > 0) {
+            toolArgs.project_id = this.userProjects[0].id;
+          }
+
           callbacks.onTranscript('agent', `⏳ [Step ${rounds + 1}/3] Querying ${toolName}...`, false);
           callbacks.onNodeActive('permission');
 
-          console.log(`📡 [Cloud Agent] Calling MCP tool: ${toolName}`);
+          console.log(`📡 [Cloud Agent] Calling MCP tool: ${toolName} with args:`, toolArgs);
           const toolResult = await this.mcpManager.executeTool(toolName, toolArgs);
 
           messages.push({
@@ -452,8 +496,11 @@ Synthesize all findings into clean, readable executive briefings.`
 
       return choice?.message?.content || this.generateSimulatedInsight(userPrompt);
     } catch (err: any) {
-      console.error('❌ Cloud agent execution error:', err);
-      return this.generateSimulatedInsight(userPrompt);
+      console.error('❌ Cloud agent execution error:', err?.message || err);
+      return `### Stallion Permission Intelligence
+Hermes encountered an issue during cloud tool execution: ${err?.message || 'Execution error'}.
+Active Projects: ${this.userProjects.map(p => p.name).join(', ') || 'Connected'}.
+Please ensure your OpenAI API Key and MCP Server endpoint are set in Render Environment settings.`;
     }
   }
 
