@@ -11,6 +11,8 @@ export interface SanitizedFile {
   file_id: string;
   file_name: string;
   format: 'pdf' | 'dwg' | string;
+  ai_view_url: string; // Direct S3 pre-signed URL (requires zero authentication)
+  view_url?: string;
   url: string;
 }
 
@@ -27,6 +29,8 @@ export interface SanitizedPermission {
   status: string;
   exp_date: string | null;
   assigned_to: string;
+  ai_view_url?: string; // Direct pre-signed S3 URL for primary approval PDF
+  file_name?: string;
   remark?: string;
   documents: {
     permission_plan?: SanitizedFile[];
@@ -73,13 +77,20 @@ export function sanitizePermissionsPayload(rawData: any): any {
 
       const fileName = String(f.file_name || f.name || 'unnamed');
       const format = fileName.toLowerCase().endsWith('.dwg') ? 'dwg' : 'pdf';
-      const url = f.ai_view_url || f.view_url || '';
+      const aiViewUrl = f.ai_view_url || '';
+      const rawViewUrl = f.view_url || '';
+      const viewUrl = rawViewUrl.startsWith('http') 
+        ? rawViewUrl 
+        : (rawViewUrl ? `https://api.dev.batman.co.in${rawViewUrl}` : '');
+      const directUrl = aiViewUrl || viewUrl;
 
       return {
         file_id: fileId,
         file_name: fileName,
         format,
-        url
+        ai_view_url: aiViewUrl || directUrl,
+        view_url: viewUrl || undefined,
+        url: directUrl
       };
     };
 
@@ -132,6 +143,19 @@ export function sanitizePermissionsPayload(rawData: any): any {
       cleanExpDate = String(perm.exp_date).split('T')[0];
     }
 
+    // Find primary approval PDF/file (prefer PDF from permission_plan or attachments)
+    let primaryFile: SanitizedFile | undefined;
+    if (docs.permission_plan && docs.permission_plan.length > 0) {
+      primaryFile = docs.permission_plan.find(f => f.format === 'pdf') || docs.permission_plan[0];
+    } else if (docs.lod_documents && docs.lod_documents.length > 0) {
+      for (const lod of docs.lod_documents) {
+        const pf = lod.files.find(f => f.format === 'pdf') || lod.files[0];
+        if (pf) { primaryFile = pf; break; }
+      }
+    } else if (docs.other_files && docs.other_files.length > 0) {
+      primaryFile = docs.other_files.find(f => f.format === 'pdf') || docs.other_files[0];
+    }
+
     return {
       id: String(perm.id || ''),
       name: String(perm.name || 'Unnamed Permission'),
@@ -139,6 +163,8 @@ export function sanitizePermissionsPayload(rawData: any): any {
       status: String(perm.permission_status || perm.status || 'Unknown'),
       exp_date: cleanExpDate,
       assigned_to: String(perm.assigned_to || perm.assigned_user || 'Unassigned'),
+      ai_view_url: primaryFile?.ai_view_url || undefined,
+      file_name: primaryFile?.file_name || undefined,
       remark: perm.remark || undefined,
       documents: docs
     };

@@ -26,13 +26,13 @@ function getScriptPath(scriptName: string): string {
 const SPECIALIZED_PERMISSION_TOOLS: MCPToolDeclaration[] = [
   {
     name: 'inspect_document_attachment',
-    description: 'Read and extract municipal conditions, clauses, and NOC requirements from an approval document or pre-signed S3 PDF URL.',
+    description: 'Read and extract municipal conditions, clauses, and NOC requirements directly from an approval PDF using the pre-signed S3 URL in "ai_view_url" from get_project_permissions (requires ZERO authentication).',
     parameters: {
       type: 'object',
       properties: {
-        document_url: { type: 'string', description: 'The pre-signed S3 URL or path of the PDF/document to inspect' }
-      },
-      required: ['document_url']
+        ai_view_url: { type: 'string', description: 'The direct pre-signed S3 URL from get_project_permissions (ai_view_url parameter, no authentication required).' },
+        document_url: { type: 'string', description: 'Alias for ai_view_url or PDF document URL' }
+      }
     }
   },
   {
@@ -142,21 +142,40 @@ function dedicatedFetch(url: string | URL, init?: any): Promise<Response> {
   });
 }
 
-async function extractPdfTextFromUrl(docUrl: string): Promise<any> {
-  const lowerUrl = docUrl.toLowerCase();
+async function extractPdfTextFromUrl(docUrl: string, token?: string): Promise<any> {
+  let cleanUrl = (docUrl || '').trim();
+  if (!cleanUrl) {
+    return { status: 'error', message: 'No document URL provided to inspect.' };
+  }
+
+  // Handle relative API path
+  if (cleanUrl.startsWith('/')) {
+    cleanUrl = `https://api.dev.batman.co.in${cleanUrl}`;
+  }
+
+  const lowerUrl = cleanUrl.toLowerCase();
   if (lowerUrl.endsWith('.dwg') || lowerUrl.includes('.dwg?')) {
     return {
       status: 'cad_binary',
       file_type: 'dwg',
       message: 'AutoCAD DWG file. CAD vector files cannot be parsed as plain text. View directly in AutoCAD or Stallion Blueprint Viewer.',
-      direct_url: docUrl
+      direct_url: cleanUrl
     };
   }
 
   try {
-    const resp = await dedicatedFetch(docUrl);
+    const isS3Url = lowerUrl.includes('amazonaws.com') || lowerUrl.includes('x-amz-');
+    const headers: Record<string, string> = {};
+
+    // Pass Authorization ONLY on internal API endpoints, NEVER on public S3 pre-signed URLs
+    if (!isS3Url && token) {
+      headers['Authorization'] = `Bearer ${token}`;
+      headers['X-JWT-Token'] = token;
+    }
+
+    const resp = await dedicatedFetch(cleanUrl, { headers });
     if (!resp.ok) {
-      return { status: 'error', message: `HTTP fetch failed: ${resp.status} ${resp.statusText}`, direct_url: docUrl };
+      return { status: 'error', message: `HTTP fetch failed: ${resp.status} ${resp.statusText}`, direct_url: cleanUrl };
     }
     const ab = await resp.arrayBuffer();
     const pdfParseMod = await import('pdf-parse');
@@ -172,7 +191,7 @@ async function extractPdfTextFromUrl(docUrl: string): Promise<any> {
         status: 'scanned_image_pdf',
         total_pages: totalPages,
         message: 'This PDF consists of scanned image pages without a digital text layer. Visual inspection of the physical scan via the direct link is required.',
-        direct_url: docUrl
+        direct_url: cleanUrl
       };
     }
 
@@ -185,11 +204,11 @@ async function extractPdfTextFromUrl(docUrl: string): Promise<any> {
       characters_extracted: rawText.length,
       truncated,
       extracted_content: content,
-      direct_url: docUrl
+      direct_url: cleanUrl
     };
   } catch (err: any) {
     console.error('Error parsing PDF in extractPdfTextFromUrl:', err);
-    return { status: 'error', message: `Failed to extract PDF text: ${err?.message || err}`, direct_url: docUrl };
+    return { status: 'error', message: `Failed to extract PDF text: ${err?.message || err}`, direct_url: cleanUrl };
   }
 }
 
@@ -477,8 +496,15 @@ export class MCPClientManager {
     console.log(`⚡ Executing MCP Tool [${name}] with args:`, finalArgs);
 
     if (name === 'inspect_document_attachment') {
-      const docUrl = String(finalArgs.document_url || '');
-      return extractPdfTextFromUrl(docUrl);
+      const docUrl = String(finalArgs.ai_view_url || finalArgs.document_url || finalArgs.url || '');
+      return extractPdfTextFromUrl(docUrl, this.jwtToken);
+    }
+
+    if (name === 'view_permission_document') {
+      if (finalArgs.ai_view_url || finalArgs.document_url || finalArgs.url) {
+        const docUrl = String(finalArgs.ai_view_url || finalArgs.document_url || finalArgs.url);
+        return extractPdfTextFromUrl(docUrl, this.jwtToken);
+      }
     }
 
     if (name === 'draft_permission_followup') {
