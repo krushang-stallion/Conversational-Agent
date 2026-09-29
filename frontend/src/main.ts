@@ -953,18 +953,55 @@ function updateVoiceMeter(level: number) {
 let speechMeterInterval: any = null;
 let currentNaturalAudio: HTMLAudioElement | null = null;
 
+let audioQueue: string[] = [];
+let isPlayingAudio = false;
+
+function stopAndClearAudioQueue() {
+  audioQueue = [];
+  isPlayingAudio = false;
+  clearInterval(speechMeterInterval);
+  updateVoiceMeter(0.0);
+  if (currentNaturalAudio) {
+    currentNaturalAudio.pause();
+    currentNaturalAudio = null;
+  }
+  audioRecorder.setMuted(false);
+  if (sphereState === 'expanded') {
+    updateStatusUI('listening');
+  }
+}
+
 function playNaturalAudio(base64Audio: string) {
   // Ensure default browser speech synthesis is permanently silenced
   if ('speechSynthesis' in window) {
     window.speechSynthesis.cancel();
   }
-  if (currentNaturalAudio) {
-    currentNaturalAudio.pause();
+
+  audioQueue.push(base64Audio);
+  if (!isPlayingAudio) {
+    playNextAudioInQueue();
+  }
+}
+
+function playNextAudioInQueue() {
+  if (audioQueue.length === 0) {
+    isPlayingAudio = false;
+    clearInterval(speechMeterInterval);
+    updateVoiceMeter(0.0);
+    audioRecorder.setMuted(false);
     currentNaturalAudio = null;
+    if (sphereState === 'expanded') {
+      updateStatusUI('listening');
+    }
+    return;
   }
 
+  isPlayingAudio = true;
   audioRecorder.setMuted(true);
   updateStatusUI('speaking');
+
+  const nextBase64 = audioQueue.shift()!;
+  currentNaturalAudio = new Audio(`data:audio/mp3;base64,${nextBase64}`);
 
   // Animate the voice meter and 3D sphere reaction while neural voice plays
   let t = 0;
@@ -975,21 +1012,16 @@ function playNaturalAudio(base64Audio: string) {
     updateVoiceMeter(simLevel);
   }, 50);
 
-  currentNaturalAudio = new Audio(`data:audio/mp3;base64,${base64Audio}`);
-  currentNaturalAudio.play().catch(console.warn);
-
   const onEnded = () => {
-    clearInterval(speechMeterInterval);
-    updateVoiceMeter(0.0);
-    audioRecorder.setMuted(false);
-    currentNaturalAudio = null;
-    if (sphereState === 'expanded') {
-      updateStatusUI('listening');
-    }
+    playNextAudioInQueue();
   };
 
   currentNaturalAudio.onended = onEnded;
   currentNaturalAudio.onerror = onEnded;
+  currentNaturalAudio.play().catch((err) => {
+    console.warn('Audio play error:', err);
+    playNextAudioInQueue();
+  });
 }
 
 function displaySubtitle(speaker: 'user' | 'agent', text: string, isFinal: boolean) {
@@ -1099,6 +1131,7 @@ window.addEventListener('click', () => {
     // Open VAD Microphone Session
     audioRecorder.start({
       onSpeechStart: () => {
+        stopAndClearAudioQueue();
         subtitleCard.classList.add('active');
         speakerBadge.className = 'speaker-badge user';
         speakerBadge.innerText = 'USER (LISTENING)';
@@ -1115,10 +1148,7 @@ window.addEventListener('click', () => {
     });
   } else if (sphereState === 'expanded' || sphereState === 'expanding') {
     // CLICK #2: STAGED TWO-PHASE COLLAPSE & END SESSION
-    if ('speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
-    }
-    clearInterval(speechMeterInterval);
+    stopAndClearAudioQueue();
     audioRecorder.stop();
     wsClient.endSession();
     updateStatusUI('idle');

@@ -723,26 +723,60 @@ Specialized in: IOD condition clause extraction, permission checklist matching, 
   }
 
   /**
-   * Helper to synthesize voice speech via OpenAI TTS and stream base64 chunks
+   * Helper to synthesize voice speech via OpenAI TTS and stream base64 chunks.
+   * Cleans formatting and splits long text into sentence-safe chunks up to 3500 chars
+   * so the entire response is spoken without stopping in between.
    */
   private async synthesizeAndStreamVoice(text: string, callbacks: AgentCallbacks, turnId?: number): Promise<void> {
     if (!this.openaiClient || !callbacks.onAudioChunk) return;
     if (turnId !== undefined && turnId !== this.turnCounter) return;
 
     try {
-      const cleanText = text
-        .replace(/[*#`_~[\]()]/g, '')
-        .replace(/https?:\/\/\S+/g, 'link')
-        .substring(0, 1000);
+      // 1. Clean markdown formatting, raw URLs, and table pipes for smooth natural speech
+      const cleaned = text
+        .replace(/https?:\/\/\S+/g, '') // remove raw URL links
+        .replace(/\|/g, ', ') // convert markdown table dividers to natural pauses
+        .replace(/[*#`_~[\]()]/g, '') // strip markdown markers
+        .replace(/\n{2,}/g, '. ') // double newlines into sentences
+        .replace(/\s+/g, ' ')
+        .trim();
 
-      const mp3 = await this.openaiClient.audio.speech.create({
-        model: 'tts-1',
-        voice: (process.env.OPENAI_TTS_VOICE as any) || 'nova',
-        input: cleanText
-      });
-      if (turnId !== undefined && turnId !== this.turnCounter) return;
-      const buffer = Buffer.from(await mp3.arrayBuffer());
-      callbacks.onAudioChunk(buffer.toString('base64'));
+      if (!cleaned) return;
+
+      // 2. Split into chunks of up to 3500 characters on sentence boundaries
+      const chunks: string[] = [];
+      if (cleaned.length <= 3800) {
+        chunks.push(cleaned);
+      } else {
+        const sentences = cleaned.match(/[^.!?]+[.!?]+|\S+/g) || [cleaned];
+        let currentChunk = '';
+        for (const s of sentences) {
+          if ((currentChunk + ' ' + s).length > 3500) {
+            if (currentChunk.trim()) chunks.push(currentChunk.trim());
+            currentChunk = s;
+          } else {
+            currentChunk = currentChunk ? currentChunk + ' ' + s : s;
+          }
+        }
+        if (currentChunk.trim()) {
+          chunks.push(currentChunk.trim());
+        }
+      }
+
+      // 3. Synthesize and stream each audio chunk
+      for (const chunk of chunks) {
+        if (turnId !== undefined && turnId !== this.turnCounter) return;
+
+        const mp3 = await this.openaiClient.audio.speech.create({
+          model: 'tts-1',
+          voice: (process.env.OPENAI_TTS_VOICE as any) || 'nova',
+          input: chunk
+        });
+
+        if (turnId !== undefined && turnId !== this.turnCounter) return;
+        const buffer = Buffer.from(await mp3.arrayBuffer());
+        callbacks.onAudioChunk(buffer.toString('base64'));
+      }
     } catch (ttsErr) {
       console.warn('⚠️ TTS audio generation warning:', ttsErr);
     }
