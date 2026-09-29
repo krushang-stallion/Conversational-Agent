@@ -707,8 +707,8 @@ Specialized in: IOD condition clause extraction, permission checklist matching, 
     // Check project names
     for (const project of this.userProjects) {
       if (lower.includes(project.name.toLowerCase()) || lower.includes(project.id)) {
-        callbacks.onNodeActive(project.name.toLowerCase());
-        setTimeout(() => callbacks.onNodeIdle(project.name.toLowerCase()), 2500);
+        callbacks.onNodeActive?.(project.name.toLowerCase());
+        setTimeout(() => callbacks.onNodeIdle?.(project.name.toLowerCase()), 2500);
       }
     }
 
@@ -716,8 +716,8 @@ Specialized in: IOD condition clause extraction, permission checklist matching, 
     const moduleKeywords = ['permission', 'tower', 'legal', 'user', 'module', 'document'];
     for (const kw of moduleKeywords) {
       if (lower.includes(kw)) {
-        callbacks.onNodeActive(kw);
-        setTimeout(() => callbacks.onNodeIdle(kw), 2000);
+        callbacks.onNodeActive?.(kw);
+        setTimeout(() => callbacks.onNodeIdle?.(kw), 2000);
       }
     }
   }
