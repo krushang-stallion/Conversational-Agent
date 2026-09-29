@@ -1001,13 +1001,31 @@ function speakAgentText(text: string) {
 }
 
 let currentNaturalAudio: HTMLAudioElement | null = null;
+let serverAudioReceived = false;
+let fallbackSpeechTimeout: any = null;
+
+function handleAgentSpeech(text: string) {
+  serverAudioReceived = false;
+  clearTimeout(fallbackSpeechTimeout);
+
+  // Grace period to let server natural audio arrive before using browser speech synthesis fallback
+  fallbackSpeechTimeout = setTimeout(() => {
+    if (!serverAudioReceived && !currentNaturalAudio) {
+      speakAgentText(text);
+    }
+  }, 1200);
+}
 
 function playNaturalAudio(base64Audio: string) {
+  serverAudioReceived = true;
+  clearTimeout(fallbackSpeechTimeout);
+
   if ('speechSynthesis' in window) {
     window.speechSynthesis.cancel();
   }
   if (currentNaturalAudio) {
     currentNaturalAudio.pause();
+    currentNaturalAudio = null;
   }
 
   audioRecorder.setMuted(true);
@@ -1019,6 +1037,7 @@ function playNaturalAudio(base64Audio: string) {
   const onEnded = () => {
     updateVoiceMeter(0.0);
     audioRecorder.setMuted(false);
+    currentNaturalAudio = null;
     if (sphereState === 'expanded') {
       updateStatusUI('listening');
     }
@@ -1058,8 +1077,8 @@ function displaySubtitle(speaker: 'user' | 'agent', text: string, isFinal: boole
 
   if (isFinal) {
     appendTranscriptHistory(speaker, text);
-    if (speaker === 'agent' && !currentNaturalAudio) {
-      speakAgentText(text);
+    if (speaker === 'agent') {
+      handleAgentSpeech(text);
     }
   }
 }

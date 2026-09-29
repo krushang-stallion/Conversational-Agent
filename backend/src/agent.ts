@@ -689,7 +689,7 @@ Specialized in: IOD condition clause extraction, permission checklist matching, 
 
       const mp3 = await this.openaiClient.audio.speech.create({
         model: 'tts-1',
-        voice: 'nova',
+        voice: (process.env.OPENAI_TTS_VOICE as any) || 'nova',
         input: cleanText
       });
       const buffer = Buffer.from(await mp3.arrayBuffer());

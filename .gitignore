@@ -44,8 +44,7 @@ node_modules/
 .env*.local
 
 # Vite / Frontend build output
-dist
-frontend/dist/
+/dist
 backend/dist/
 
 # OS metadata

@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "WebSocket Server for MCP UI",
   "scripts": {
+    "build": "tsc --noEmit",
     "start": "tsx src/server.ts"
   },
   "dependencies": {
