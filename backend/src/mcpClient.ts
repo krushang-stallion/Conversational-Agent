@@ -4,6 +4,7 @@ import { Readable } from 'stream';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { sanitizePermissionsPayload } from './payloadSanitizer.js';
 
 export interface MCPToolDeclaration {
   name: string;
@@ -375,6 +376,9 @@ export class MCPClientManager {
           name,
           arguments: finalArgs
         });
+        if (name === 'get_project_permissions') {
+          return sanitizePermissionsPayload(result);
+        }
         return result;
       } catch (err: any) {
         console.error(`❌ Remote MCP execution error for ${name}:`, err);

@@ -55,5 +55,4 @@ Thumbs.db
 # Custom / Agent configurations
 .energy-stream-check
 .agents/
-AGENTS.md
 CLAUDE.md
