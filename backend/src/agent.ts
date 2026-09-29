@@ -26,6 +26,7 @@ export class SphereConversationalAgent {
   private hermesBin: string;
   private pendingMobileNumber: string | null = null;
   private sessionStarted = false;
+  private conversationHistory: any[] = [];
 
   constructor(remoteMcpUrl?: string) {
     const cwd = process.cwd();
@@ -66,6 +67,7 @@ export class SphereConversationalAgent {
     this.userProjects = [];
     this.pendingMobileNumber = null;
     this.sessionStarted = false;
+    this.conversationHistory = [];
   }
 
   /**
@@ -467,11 +469,18 @@ Mapped Projects: ${this.userProjects.map(p => p.name).join(', ') || 'Connected'}
         ? `\nActive User Projects: ${this.userProjects.map(p => `Project Name: "${p.name}", ID: "${p.id}"`).join('; ')}`
         : '';
 
-      const messages: any[] = [
-        {
-          role: 'system',
-          content: `You are the Stallion Strategic Permission & Regulatory Specialist, an elite real estate compliance officer and executive municipal advisor.
+      const systemMessage = {
+        role: 'system' as const,
+        content: `You are the Stallion Strategic Permission & Regulatory Specialist, an elite real estate compliance officer and executive municipal advisor.
 Your mission is focused on Real Estate Permissions, Municipal Approvals (MCGM/MHADA/SRA), and Compliance Governance.${activeProjectContext}
+
+---
+### 🤝 CONVERSATIONAL & INTERACTIVE SESSION RULES
+- This is an ongoing, real-time interactive session with a real estate developer.
+- Maintain full conversational context: remember previous questions, projects, pending clearances, and recommendations discussed in earlier turns.
+- If the user says "Draft it", "Yes", "Approve", "What about that?", or refers to a previously discussed topic, continue the train of thought seamlessly without asking them to repeat themselves.
+- Never act like an isolated search engine. Act like a proactive executive partner.
+- Always end your response with an actionable next step or a natural question to keep the conversation flowing (e.g. asking to draft reminders, inspect attachments, or check milestones).
 
 ---
 ### 🚨 STRICT PROHIBITION: NEVER JUST READ OUT OR LIST PERMISSIONS
@@ -516,13 +525,25 @@ When the user asks to follow up or draft a reminder:
 - Extract: Permission Name, Assigned Person, Role, Phone, Due Timestamp (e.g. 11:45 PM Today), and Blocking Stage.
 - Call \`draft_permission_followup\` if needed or formulate the exact draft.
 - STRICT GUARDRAIL: State clearly: 'Follow-up reminder drafted. Do NOT send automatically. User approval required before dispatch.'
-- Ask user for confirmation to dispatch.`
-        },
-        {
-          role: 'user',
-          content: userPrompt
-        }
-      ];
+- Ask user for confirmation: 'Shall I approve and dispatch this reminder now?'
+- If the user confirms with 'Approve', 'Send it', or 'Yes', confirm the dispatch and log the timestamp in the conversation timeline.`
+      };
+
+      if (this.conversationHistory.length === 0) {
+        this.conversationHistory.push(systemMessage);
+      } else {
+        this.conversationHistory[0] = systemMessage;
+      }
+
+      this.conversationHistory.push({ role: 'user', content: userPrompt });
+
+      // Prune oldest non-system messages if history exceeds 24 entries to protect context window
+      if (this.conversationHistory.length > 24) {
+        const sys = this.conversationHistory[0];
+        this.conversationHistory = [sys, ...this.conversationHistory.slice(-20)];
+      }
+
+      const messages = this.conversationHistory;
 
       // Initial call to GPT-4o
       let response = await this.openaiClient.chat.completions.create({
@@ -579,7 +600,9 @@ When the user asks to follow up or draft a reminder:
         choice = response.choices[0];
       }
 
-      return choice?.message?.content || this.generateSimulatedInsight(userPrompt);
+      const finalContent = choice?.message?.content || this.generateSimulatedInsight(userPrompt);
+      this.conversationHistory.push({ role: 'assistant', content: finalContent });
+      return finalContent;
     } catch (err: any) {
       console.error('❌ Cloud agent execution error:', err?.message || err);
       return `### Stallion Permission Intelligence
