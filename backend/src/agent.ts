@@ -19,6 +19,8 @@ export class SphereConversationalAgent {
   private openaiClient: OpenAI | null = null;
   private mcpManager: MCPClientManager;
   private isProcessing = false;
+  private processingQueue: Promise<void> = Promise.resolve();
+  private turnCounter = 0;
   private jwtToken = '';
   private userProfile: any = null;
   private userProjects: ProjectInfo[] = [];
@@ -62,6 +64,7 @@ export class SphereConversationalAgent {
 
   public resetSession(token?: string): void {
     this.isProcessing = false;
+    this.processingQueue = Promise.resolve();
     this.jwtToken = token || '';
     this.userProfile = null;
     this.userProjects = [];
@@ -120,7 +123,22 @@ export class SphereConversationalAgent {
     userInput: { text?: string; audioBase64?: string; mimeType?: string },
     callbacks: AgentCallbacks
   ): Promise<void> {
-    if (this.isProcessing) return;
+    const turnId = ++this.turnCounter;
+
+    this.processingQueue = this.processingQueue.then(async () => {
+      await this.executeTurnInternal(userInput, callbacks, turnId);
+    }).catch(err => {
+      console.error('❌ Processing turn queue error:', err);
+    });
+
+    return this.processingQueue;
+  }
+
+  private async executeTurnInternal(
+    userInput: { text?: string; audioBase64?: string; mimeType?: string },
+    callbacks: AgentCallbacks,
+    turnId: number
+  ): Promise<void> {
     this.isProcessing = true;
 
     try {
@@ -179,7 +197,11 @@ export class SphereConversationalAgent {
 
       callbacks.onStateChange('speaking');
       callbacks.onTranscript('agent', responseText, true);
-      await this.synthesizeAndStreamVoice(responseText, callbacks);
+
+      // If a newer user turn has not preempted this one, stream voice audio
+      if (turnId === this.turnCounter) {
+        await this.synthesizeAndStreamVoice(responseText, callbacks, turnId);
+      }
       callbacks.onStateChange('listening');
 
     } catch (error: any) {
@@ -701,8 +723,9 @@ Specialized in: IOD condition clause extraction, permission checklist matching, 
   /**
    * Helper to synthesize voice speech via OpenAI TTS and stream base64 chunks
    */
-  private async synthesizeAndStreamVoice(text: string, callbacks: AgentCallbacks): Promise<void> {
+  private async synthesizeAndStreamVoice(text: string, callbacks: AgentCallbacks, turnId?: number): Promise<void> {
     if (!this.openaiClient || !callbacks.onAudioChunk) return;
+    if (turnId !== undefined && turnId !== this.turnCounter) return;
 
     try {
       const cleanText = text
@@ -715,6 +738,7 @@ Specialized in: IOD condition clause extraction, permission checklist matching, 
         voice: (process.env.OPENAI_TTS_VOICE as any) || 'nova',
         input: cleanText
       });
+      if (turnId !== undefined && turnId !== this.turnCounter) return;
       const buffer = Buffer.from(await mp3.arrayBuffer());
       callbacks.onAudioChunk(buffer.toString('base64'));
     } catch (ttsErr) {
