@@ -1,10 +1,58 @@
 import http from 'http';
 import https from 'https';
+import fs from 'fs';
+import path from 'path';
+import { execFile } from 'child_process';
 import { Readable } from 'stream';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { sanitizePermissionsPayload } from './payloadSanitizer.js';
+
+function getScriptPath(scriptName: string): string {
+  const candidates = [
+    path.join(process.cwd(), 'scripts', scriptName),
+    path.join(process.cwd(), '..', 'scripts', scriptName),
+    path.join(__dirname, '..', '..', 'scripts', scriptName),
+    path.join(__dirname, '..', 'scripts', scriptName),
+    path.join('/app', 'scripts', scriptName)
+  ];
+  for (const c of candidates) {
+    if (fs.existsSync(c)) return c;
+  }
+  return candidates[0];
+}
+
+const SPECIALIZED_PERMISSION_TOOLS: MCPToolDeclaration[] = [
+  {
+    name: 'inspect_document_attachment',
+    description: 'Read and extract municipal conditions, clauses, and NOC requirements from an approval document or pre-signed S3 PDF URL.',
+    parameters: {
+      type: 'object',
+      properties: {
+        document_url: { type: 'string', description: 'The pre-signed S3 URL or path of the PDF/document to inspect' }
+      },
+      required: ['document_url']
+    }
+  },
+  {
+    name: 'draft_permission_followup',
+    description: 'Draft a structured human-in-the-loop follow-up reminder for a pending clearance with due timestamp and milestone blocker.',
+    parameters: {
+      type: 'object',
+      properties: {
+        permission_name: { type: 'string', description: 'Name of the clearance (e.g. CFO NOC)' },
+        assigned_to: { type: 'string', description: 'Name of the responsible person (e.g. Rajesh Sharma)' },
+        role: { type: 'string', description: 'Role or designation (e.g. Liaison Architect)' },
+        phone: { type: 'string', description: 'Phone number for WhatsApp dispatch' },
+        due_time: { type: 'string', description: 'Target due time/date (e.g. 11:45 PM)' },
+        blocks_stage: { type: 'string', description: 'Construction milestone blocked (e.g. Further CC)' },
+        latest_update: { type: 'string', description: 'Latest progress note' }
+      },
+      required: ['permission_name', 'assigned_to', 'role']
+    }
+  }
+];
 
 export interface MCPToolDeclaration {
   name: string;
@@ -352,7 +400,14 @@ export class MCPClientManager {
   }
 
   public getTools(): MCPToolDeclaration[] {
-    return this.tools;
+    const existingNames = new Set(this.tools.map(t => t.name));
+    const merged = [...this.tools];
+    for (const tool of SPECIALIZED_PERMISSION_TOOLS) {
+      if (!existingNames.has(tool.name)) {
+        merged.push(tool);
+      }
+    }
+    return merged;
   }
 
   public getNodeForTool(toolName: string, args?: Record<string, any>): string {
@@ -369,6 +424,54 @@ export class MCPClientManager {
     }
 
     console.log(`⚡ Executing MCP Tool [${name}] with args:`, finalArgs);
+
+    if (name === 'inspect_document_attachment') {
+      const docUrl = finalArgs.document_url || '';
+      const scriptPath = getScriptPath('read_document_attachment.py');
+      return new Promise((resolve) => {
+        execFile('python3', [scriptPath, docUrl], { maxBuffer: 10 * 1024 * 1024 }, (err, stdout) => {
+          if (err) {
+            resolve({ error: err.message, status: 'error' });
+            return;
+          }
+          try {
+            resolve(JSON.parse(stdout));
+          } catch {
+            resolve({ output: stdout });
+          }
+        });
+      });
+    }
+
+    if (name === 'draft_permission_followup') {
+      const scriptPath = getScriptPath('permission_followup.py');
+      const cmdArgs = [
+        scriptPath,
+        'draft-reminder',
+        '--permission', finalArgs.permission_name || 'Clearance',
+        '--assigned-to', finalArgs.assigned_to || 'Assigned Person',
+        '--role', finalArgs.role || 'Consultant',
+        '--phone', finalArgs.phone || '919999999999',
+        '--due-time', finalArgs.due_time || 'Immediate',
+        '--blocks-stage', finalArgs.blocks_stage || 'Further Construction'
+      ];
+      if (finalArgs.latest_update) {
+        cmdArgs.push('--latest-update', finalArgs.latest_update);
+      }
+      return new Promise((resolve) => {
+        execFile('python3', cmdArgs, { maxBuffer: 5 * 1024 * 1024 }, (err, stdout) => {
+          if (err) {
+            resolve({ error: err.message, status: 'error' });
+            return;
+          }
+          try {
+            resolve(JSON.parse(stdout));
+          } catch {
+            resolve({ output: stdout });
+          }
+        });
+      });
+    }
 
     if (this.isConnected && this.client) {
       try {
