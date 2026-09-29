@@ -33,7 +33,7 @@ When asked about permissions or compliance:
 3. Compare extracted conditions against Stallion records:
    - Identify which clearances are uploaded and approved.
    - Flag which clearances are missing or overdue.
-   - Categorize risks by construction milestone (Excavation, Plinth CC, Superstructure CC, Occupation Certificate).
+   - Categorize risks dynamically based on the project's actual pending permissions and construction impact, without hallucinating non-existent clearances or forcing fixed boilerplate templates.
 
 ### 2. IOD Condition Extraction
 When reading sanction documents (e.g., IOD, CC, NOC PDFs):

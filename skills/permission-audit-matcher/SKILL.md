@@ -29,14 +29,10 @@ Use this skill to audit project permissions and cross-reference municipal requir
    - **Missing / Not Uploaded**: Required by IOD condition but not present in Stallion database.
 
 3. **Construction Blocker Analysis**:
-   Map each missing clearance to its critical path construction milestone:
-   - **Excavation & Shoring**: Requires IOD, Soil Investigation, Borewell NOC.
-   - **Plinth CC**: Requires Tree NOC, SWD Remarks, S&D Remarks, CFO Initial NOC.
-   - **Further CC (Above Plinth / Superstructure)**: Requires CFO NOC, Environmental Clearance, AAI NOC, HRC approval.
-   - **Occupation Certificate (OC)**: Requires CFO Final NOC, Water Connection, SWM NOC, Lift Inspection.
+   Map pending or missing clearances dynamically to their actual construction milestone impact based on the real permissions data and any extracted IOD conditions. Do not force fixed boilerplate phase templates or assume placeholder clearances that are absent from project records.
 
-4. **Executive Audit Output**:
-   Present an audit table:
-   | Permission Name | Category | IOD Source | Stage Required | Stallion Status | Blocking Risk | Suggested Assignee |
-   | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-   | CFO NOC | Fire | IOD Cond. 23 | Before further CC | ⚠️ Not Uploaded | Superstructure CC | Liaison Architect |
+4. **Dynamic Audit Output**:
+   Present findings dynamically based strictly on the fetched tool data:
+   - Provide real status breakdowns (Issued/Approved vs. Pending/In-Process).
+   - Detail genuine bottlenecks with assigned owners, expiry dates, and real-world impact.
+   - Avoid fixed boilerplate templates or placeholder rows. Offer proactive follow-up on actual pending items.
