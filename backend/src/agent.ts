@@ -370,26 +370,74 @@ export class SphereConversationalAgent {
   }
 
   /**
-   * Helper to normalize any tool parameter schema to lowercase types required by OpenAI API
+   * Helper to format and sanitize any tool parameter schema strictly conforming to OpenAI Function Calling specs.
+   * OpenAI requires:
+   * {
+   *   type: 'object',
+   *   properties: {
+   *     [propName]: { type: 'string' | 'number' | 'boolean' | 'array' | 'object', description?: string, enum?: any[] }
+   *   },
+   *   required: string[]
+   * }
    */
-  private normalizeJsonSchema(schema: any): any {
-    if (!schema || typeof schema !== 'object') return schema;
-    if (Array.isArray(schema)) return schema.map(s => this.normalizeJsonSchema(s));
+  private formatOpenAIToolSchema(rawParams: any): Record<string, any> {
+    if (!rawParams || typeof rawParams !== 'object') {
+      return { type: 'object', properties: {} };
+    }
 
-    const normalized: any = {};
-    for (const [key, value] of Object.entries(schema)) {
-      if (key === 'type' && typeof value === 'string') {
-        normalized[key] = value.toLowerCase();
-      } else if (typeof value === 'object' && value !== null) {
-        normalized[key] = this.normalizeJsonSchema(value);
-      } else {
-        normalized[key] = value;
+    const properties: Record<string, any> = {};
+    const rawProperties = rawParams.properties && typeof rawParams.properties === 'object'
+      ? rawParams.properties
+      : {};
+
+    for (const [propName, propDef] of Object.entries(rawProperties)) {
+      if (!propDef || typeof propDef !== 'object') {
+        properties[propName] = { type: 'string' };
+        continue;
       }
+
+      const p: any = propDef;
+      let propType = 'string';
+      if (typeof p.type === 'string') {
+        propType = p.type.toLowerCase();
+      } else if (Array.isArray(p.anyOf)) {
+        // FastMCP / Pydantic Optional[T] produces: anyOf: [{ type: 'string' }, { type: 'null' }]
+        const nonNull = p.anyOf.find((item: any) => item?.type && item.type.toLowerCase() !== 'null');
+        if (nonNull?.type) {
+          propType = String(nonNull.type).toLowerCase();
+        }
+      }
+
+      const cleanProp: Record<string, any> = {
+        type: propType
+      };
+
+      if (p.description || p.title) {
+        cleanProp.description = String(p.description || p.title);
+      }
+
+      if (Array.isArray(p.enum) && p.enum.length > 0) {
+        cleanProp.enum = p.enum;
+      }
+
+      if (propType === 'array' && p.items && typeof p.items === 'object') {
+        cleanProp.items = {
+          type: typeof p.items.type === 'string' ? p.items.type.toLowerCase() : 'string'
+        };
+      }
+
+      properties[propName] = cleanProp;
     }
-    if (!normalized.type) {
-      normalized.type = 'object';
-    }
-    return normalized;
+
+    const required = Array.isArray(rawParams.required)
+      ? rawParams.required.filter((r: any) => typeof r === 'string' && Object.prototype.hasOwnProperty.call(properties, r))
+      : [];
+
+    return {
+      type: 'object',
+      properties,
+      required
+    };
   }
 
   /**
@@ -411,7 +459,7 @@ Mapped Projects: ${this.userProjects.map(p => p.name).join(', ') || 'Connected'}
         function: {
           name: t.name,
           description: t.description || '',
-          parameters: this.normalizeJsonSchema(t.parameters || { type: 'object', properties: {} })
+          parameters: this.formatOpenAIToolSchema(t.parameters)
         }
       }));
 
@@ -489,7 +537,8 @@ Synthesize all findings into clean, readable executive briefings.`
         // Follow-up call with tool results
         response = await this.openaiClient.chat.completions.create({
           model: process.env.OPENAI_MODEL || 'gpt-4o',
-          messages
+          messages,
+          tools: tools.length > 0 ? tools : undefined
         });
         choice = response.choices[0];
       }

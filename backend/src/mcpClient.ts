@@ -173,7 +173,7 @@ export class MCPClientManager {
             name: t.name,
             description: t.description,
             parameters: {
-              type: 'OBJECT',
+              type: 'object',
               properties: t.inputSchema?.properties || {},
               required: (t.inputSchema?.required as string[]) || [],
             }
@@ -220,7 +220,7 @@ export class MCPClientManager {
             name: t.name,
             description: t.description,
             parameters: {
-              type: 'OBJECT',
+              type: 'object',
               properties: t.inputSchema?.properties || {},
               required: (t.inputSchema?.required as string[]) || [],
             }
