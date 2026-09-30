@@ -3,6 +3,11 @@ import path from 'path';
 import fs from 'fs';
 import OpenAI from 'openai';
 import { MCPClientManager, ProjectInfo } from './mcpClient.js';
+import { 
+  extractIodConditionsFromBuffer, 
+  processClearancePdfsInBatches, 
+  ExtractedIodDocument 
+} from './documentExtractor.js';
 
 export type AIState = 'idle' | 'listening' | 'thinking' | 'speaking';
 
@@ -29,6 +34,7 @@ export class SphereConversationalAgent {
   private pendingMobileNumber: string | null = null;
   private sessionStarted = false;
   private conversationHistory: any[] = [];
+  private activeIodSanction: ExtractedIodDocument | null = null;
 
   constructor(remoteMcpUrl?: string) {
     const cwd = process.cwd();
@@ -71,6 +77,42 @@ export class SphereConversationalAgent {
     this.pendingMobileNumber = null;
     this.sessionStarted = false;
     this.conversationHistory = [];
+    this.activeIodSanction = null;
+  }
+
+  /**
+   * Ingest and parse an uploaded IOD PDF document, extracting conditions using gpt-4o-mini
+   */
+  public async ingestIodDocument(fileName: string, buffer: Buffer, callbacks: AgentCallbacks): Promise<ExtractedIodDocument> {
+    if (!this.openaiClient) {
+      throw new Error('OpenAI client is not configured.');
+    }
+
+    callbacks.onStateChange('thinking');
+    callbacks.onNodeActive('document');
+    callbacks.onTranscript('agent', `Ingesting and reading IOD document: ${fileName}...`, false);
+
+    const extracted = await extractIodConditionsFromBuffer(buffer, fileName, this.openaiClient);
+    this.activeIodSanction = extracted;
+
+    const count = extracted.total_conditions;
+    const refStr = extracted.iod_reference ? ` (Reference: ${extracted.iod_reference})` : '';
+    const reply = `I have successfully ingested your IOD sanction document: "${fileName}"${refStr}. I extracted ${count} municipal sanction conditions. Whenever you're ready, ask me to audit your project permissions, and I will compare these conditions against all Stallion clearance records.`;
+
+    callbacks.onStateChange('speaking');
+    callbacks.onTranscript('agent', reply, true);
+    await this.synthesizeAndStreamVoice(reply, callbacks);
+    callbacks.onStateChange('listening');
+
+    return extracted;
+  }
+
+  public getActiveIodSanction(): ExtractedIodDocument | null {
+    return this.activeIodSanction;
+  }
+
+  public clearActiveIodSanction(): void {
+    this.activeIodSanction = null;
   }
 
   /**
@@ -491,10 +533,28 @@ Mapped Projects: ${this.userProjects.map(p => p.name).join(', ') || 'Connected'}
         ? `\nActive User Projects: ${this.userProjects.map(p => `Project Name: "${p.name}", ID: "${p.id}"`).join('; ')}`
         : '';
 
+      const activeIodContext = this.activeIodSanction
+        ? `\n\n### 📑 ACTIVE UPLOADED IOD SANCTION DOCUMENT (PRIMARY BENCHMARK)
+The user has uploaded their project IOD sanction document: "${this.activeIodSanction.file_name}".
+Reference: ${this.activeIodSanction.iod_reference || 'N/A'}, Sanction Date: ${this.activeIodSanction.sanction_date || 'N/A'}.
+Total Extracted Conditions: ${this.activeIodSanction.total_conditions}.
+SUMMARY: ${this.activeIodSanction.raw_summary || 'Sanction conditions extracted.'}
+EXTRACTED IOD CONDITIONS:
+${JSON.stringify(this.activeIodSanction.conditions, null, 2)}
+
+AUDIT CROSS-MATCHING DIRECTIVE:
+When auditing permissions, cross-match every IOD condition above against the project's Stallion clearance records.
+Categorize findings dynamically into:
+1. COMPLIED / SATISFIED (Clearance approved & verified in Stallion)
+2. CRITICAL BLOCKERS (Clearances required for current stage e.g. Plinth CC or Further CC, but missing or unapproved)
+3. IN PROGRESS / UPCOMING (Future stage clearances e.g. OC under process)
+4. REMARKS & CAVEATS (Reference specific remarks_notes, financial guarantees, and validity dates from the documents).`
+        : '';
+
       const systemMessage = {
         role: 'system' as const,
         content: `You are the Stallion Strategic Permission & Regulatory Specialist, an elite real estate compliance officer and executive municipal advisor.
-Your mission is focused on Real Estate Permissions, Municipal Approvals (MCGM/MHADA/SRA), and Compliance Governance.${activeProjectContext}
+Your mission is focused on Real Estate Permissions, Municipal Approvals (MCGM/MHADA/SRA), and Compliance Governance.${activeProjectContext}${activeIodContext}
 
 ---
 ### 🤝 CONVERSATIONAL & INTERACTIVE SESSION RULES
@@ -507,41 +567,36 @@ Your mission is focused on Real Estate Permissions, Municipal Approvals (MCGM/MH
 ---
 ### 🔍 DYNAMIC PERMISSION AUDIT & REGULATORY COMPLIANCE RULES
 When the user asks to audit permissions, evaluate compliance status, or check project approvals:
-1. **TWO-STEP TOOL EXECUTION FOR AUDITS**:
-   - **Step 1**: Always invoke \`get_project_permissions(project_id="...")\` to obtain the live permission records and attachments.
-   - **Step 2 (MANDATORY DOCUMENT INSPECTION)**: A genuine regulatory audit REQUIRES reading the actual content of the approval documents, NOT merely listing file names! Examine the primary sanction documents (such as IOD, Amendment sanction letters, NOCs, CC) that contain an \`ai_view_url\`. You MUST call \`inspect_document_attachment(ai_view_url="<ai_view_url>")\` on the primary approval document(s) (e.g. the IOD or latest Amendment approval PDF) to read and extract the actual municipal conditions, stages, restrictions, and compliance clauses!
+1. **TOOL EXECUTION FOR AUDITS**:
+   - Always invoke \`get_project_permissions(project_id="...")\` to obtain live permission records and clearance documents.
+   - If an active uploaded IOD is on file, the system automatically runs the Multi-PDF Extraction Loop across all Stallion clearance PDFs using gpt-4o-mini and returns the unified master clearances.
+   - You MUST compare the IOD conditions against the returned master clearances.
 2. **STRICTLY DATA-DRIVEN — NO PREDEFINED OR FIXED FORMAT**:
    - The response format, structure, and content MUST be dynamically generated based EXCLUSIVELY on the real data returned by the tool calls.
    - DO NOT follow a rigid, canned, or predefined template (e.g. NEVER force fixed headings like "Executive Health Summary", "Construction Milestone Blocker Analysis" with predefined Phase 1 to Phase 4 breakdowns, or static matrix tables).
-   - ABSOLUTELY NEVER hallucinate, invent, or assume placeholder clearances that are absent from the tool call response (do NOT mention 'Soil/Borewell NOC', 'Tree NOC', 'SWD remarks', 'Final CFO', or write '(details not in current data)' for items not in the returned list).
+   - ABSOLUTELY NEVER hallucinate, invent, or assume placeholder clearances that are absent from the tool call response.
 3. **ORGANIC & ADAPTIVE DATA SYNTHESIS (CHECKLIST + EXTRACTED CONDITIONS)**:
-   - Synthesize the audit by integrating the permission checklist with the extracted PDF clauses:
-     * Accurately state the counts and statuses from the returned data (how many are Issued/Approved vs. Pending/In-Process/Expired).
-     * Detail the specific conditions read directly from the sanction PDF(s) (e.g., condition numbers, required approvals before Further CC, fire safety obligations, structural certificates, setback handovers).
-     * Cross-reference these extracted conditions against the project's actual status (which required conditions have been met and uploaded vs. which remain pending or missing).
-     * For any clearance marked as Pending, In-Process, or Overdue in the data, evaluate its real-world operational or regulatory impact based on what that specific clearance and document state.
-     * Incorporate real details from the payload: assigned persons (\`assigned_to\`), expiry dates (\`exp_date\`), and remarks (\`remark\`).
-   - Present the information adaptively and cleanly (e.g., concise bullet points, executive overview, or a table only if appropriate for the data volume) to directly answer the user's specific request.
+   - Synthesize the audit by integrating the IOD conditions with the clearance documents:
+     * Accurately state which clearances are Verified/Complied vs Pending/Missing.
+     * Detail the specific conditions from the IOD and clearance documents (e.g. condition numbers, stages, fire safety obligations, structural certificates).
+     * Incorporate real details from the payload: assigned persons (\`assigned_to\`), expiry dates (\`valid_until\` / \`exp_date\`), and \`remarks_notes\`.
 4. **PROACTIVE ACTIONABLE CONCLUSION**:
-   - End with a natural, conversational next step tied directly to the actual pending items in the data (e.g., asking if the developer would like to draft a follow-up reminder to the assigned person for a specific pending clearance, or inspect another attached document).
+   - End with a natural, conversational next step tied directly to the actual pending items in the data (e.g., asking if the developer would like to draft a follow-up reminder for a specific pending clearance).
 
 ### 🔍 INSPECTING APPROVAL DOCUMENTS & PDFS
 When asked to read, inspect, check conditions, or summarize an approval document (e.g. CFO NOC, IOD, LOI, CC, NOC, Approval Plan):
 - In \`get_project_permissions\`, every permission includes the direct \`ai_view_url\` parameter.
 - \`ai_view_url\` is a direct pre-signed Amazon S3 URL that requires ZERO authentication and is universally readable.
 - Call \`inspect_document_attachment(ai_view_url="<ai_view_url>")\` with that URL to extract the full text and clauses.
-- NEVER claim there are 'authorisation issues' or that credentials/tokens failed. \`ai_view_url\` is pre-authorized by Stallion.
-- NEVER call \`view_permission_document\` when you need to read or analyze document text—always call \`inspect_document_attachment\`.
-- Extract and quote the specific conditions, clearance clauses, dates, and requirements directly from the document content.
 
 ---
 ### 📝 HUMAN-IN-THE-LOOP FOLLOW-UP REMINDER RULES
 When the user asks to follow up or draft a reminder:
-- Extract: Permission Name, Assigned Person, Role, Phone, Due Timestamp (e.g. 11:45 PM Today), and Blocking Stage.
+- Extract: Permission Name, Assigned Person, Role, Phone, Due Timestamp, and Blocking Stage.
 - Call \`draft_permission_followup\` if needed or formulate the exact draft.
 - STRICT GUARDRAIL: State clearly: 'Follow-up reminder drafted. Do NOT send automatically. User approval required before dispatch.'
 - Ask user for confirmation: 'Shall I approve and dispatch this reminder now?'
-- If the user confirms with 'Approve', 'Send it', or 'Yes', confirm the dispatch and log the timestamp in the conversation timeline.`
+- If the user confirms with 'Approve', 'Send it', or 'Yes', confirm the dispatch.`
       };
 
       if (this.conversationHistory.length === 0) {
@@ -597,7 +652,47 @@ When the user asks to follow up or draft a reminder:
           callbacks.onNodeActive('permission');
 
           console.log(`📡 [Cloud Agent] Calling MCP tool: ${toolName} with args:`, toolArgs);
-          const toolResult = await this.mcpManager.executeTool(toolName, toolArgs);
+          let toolResult = await this.mcpManager.executeTool(toolName, toolArgs);
+
+          // If auditing permissions and an uploaded IOD is active, run the Multi-PDF batch extraction loop
+          if (toolName === 'get_project_permissions' && this.activeIodSanction && this.openaiClient) {
+            try {
+              let parsedPerms: any = toolResult;
+              if (typeof toolResult === 'string') {
+                try { parsedPerms = JSON.parse(toolResult); } catch {}
+              }
+              const permsList = parsedPerms?.permissions || parsedPerms?.data?.permissions || (Array.isArray(parsedPerms) ? parsedPerms : []);
+
+              if (permsList.length > 0) {
+                callbacks.onTranscript('agent', '🔍 Running parallel extraction on clearance PDFs with gpt-4o-mini...', false);
+                const masterContext = await processClearancePdfsInBatches(
+                  permsList,
+                  String(toolArgs.project_id || this.userProjects[0]?.id || '238'),
+                  this.openaiClient,
+                  this.jwtToken,
+                  (msg) => callbacks.onTranscript('agent', msg, false),
+                  4
+                );
+
+                toolResult = {
+                  success: true,
+                  project_id: toolArgs.project_id || this.userProjects[0]?.id || '238',
+                  active_uploaded_iod: {
+                    file_name: this.activeIodSanction.file_name,
+                    iod_reference: this.activeIodSanction.iod_reference,
+                    sanction_date: this.activeIodSanction.sanction_date,
+                    total_conditions: this.activeIodSanction.total_conditions,
+                    conditions: this.activeIodSanction.conditions
+                  },
+                  unified_master_clearances: masterContext.clearances,
+                  unprocessed_permissions: masterContext.unprocessed_permissions,
+                  audit_instructions: "CRITICAL: Compare every condition in active_uploaded_iod against unified_master_clearances. Determine which conditions are COMPLIED, which are IN PROGRESS, and which are CRITICAL BLOCKERS (required for current stage like Plinth CC or Further CC but missing or unapproved in Stallion). Specifically reference clearance remarks_notes, dates, and authorities."
+                };
+              }
+            } catch (batchErr) {
+              console.warn('⚠️ Batch clearance extraction error:', batchErr);
+            }
+          }
 
           messages.push({
             role: 'tool',

@@ -17,7 +17,7 @@ const frontendDistPath = fs.existsSync(path.resolve(process.cwd(), '../frontend/
   : path.resolve(process.cwd(), 'frontend/dist');
 
 export interface UIEvent {
-  type: 'STATE_CHANGE' | 'NODE_ACTIVE' | 'NODE_IDLE' | 'TRANSCRIPT' | 'PROJECTS_LOADED' | 'AUDIO_STREAM' | 'ERROR';
+  type: 'STATE_CHANGE' | 'NODE_ACTIVE' | 'NODE_IDLE' | 'TRANSCRIPT' | 'PROJECTS_LOADED' | 'AUDIO_STREAM' | 'ERROR' | 'IOD_UPLOADED' | 'IOD_CLEARED';
   state?: AIState;
   nodeModule?: string;
   speaker?: 'user' | 'agent';
@@ -26,6 +26,9 @@ export interface UIEvent {
   projects?: ProjectInfo[];
   audioBase64?: string;
   error?: string;
+  fileName?: string;
+  totalConditions?: number;
+  iodReference?: string;
 }
 
 // HTTP Server for serving UI static assets and upgrading to WebSockets
@@ -140,6 +143,31 @@ wss.on('connection', (ws: WebSocket) => {
               callbacks
             );
           }
+          break;
+
+        case 'UPLOAD_IOD_PDF':
+          console.log(`📑 Processing uploaded IOD PDF: ${message.fileName} (${message.base64?.length || 0} base64 chars)`);
+          if (message.base64) {
+            try {
+              const pdfBuffer = Buffer.from(message.base64, 'base64');
+              const result = await agent.ingestIodDocument(message.fileName || 'IOD_Sanction.pdf', pdfBuffer, callbacks);
+              sendEvent({
+                type: 'IOD_UPLOADED',
+                fileName: result.file_name,
+                totalConditions: result.total_conditions,
+                iodReference: result.iod_reference
+              });
+            } catch (uploadErr: any) {
+              console.error('❌ Error ingesting IOD PDF:', uploadErr);
+              sendEvent({ type: 'ERROR', error: `Failed to process IOD document: ${uploadErr.message || uploadErr}` });
+            }
+          }
+          break;
+
+        case 'CLEAR_IOD_PDF':
+          console.log('🗑️ Clearing active IOD document from session');
+          agent.clearActiveIodSanction();
+          sendEvent({ type: 'IOD_CLEARED' });
           break;
 
         default:

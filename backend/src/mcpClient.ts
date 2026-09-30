@@ -76,7 +76,7 @@ export interface ProjectInfo {
  * Dedicated fetch implementation using agent: false to force a new TCP connection,
  * preventing socket lockup / pooling deadlocks when an SSE stream is open on the same host.
  */
-function dedicatedFetch(url: string | URL, init?: any): Promise<Response> {
+export function dedicatedFetch(url: string | URL, init?: any): Promise<Response> {
   return new Promise((resolve, reject) => {
     try {
       const urlObj = typeof url === 'string' ? new URL(url) : url;

@@ -33,6 +33,15 @@ const micOffIcon = document.querySelector<HTMLElement>('#mic-off-icon')!;
 const muteBtnText = document.querySelector<HTMLElement>('#mute-btn-text')!;
 let isUserMuted = false;
 
+// --- IOD UPLOAD & DOCUMENT DOM ELEMENTS ---
+const uploadIodBtn = document.querySelector<HTMLElement>('#upload-iod-btn');
+const iodFileInput = document.querySelector<HTMLInputElement>('#iod-file-input');
+const activeIodPill = document.querySelector<HTMLElement>('#active-iod-pill');
+const iodNameText = document.querySelector<HTMLElement>('#iod-name-text');
+const iodCountText = document.querySelector<HTMLElement>('#iod-count-text');
+const iodRemoveBtn = document.querySelector<HTMLElement>('#iod-remove-btn');
+const dragOverlay = document.querySelector<HTMLElement>('#drag-overlay');
+
 // --- THREE.JS SCENE SETUP ---
 const scene = new THREE.Scene();
 scene.background = new THREE.Color('#070806');
@@ -1091,6 +1100,93 @@ wsClient.connect({
   },
   onAudioStream: (base64Audio) => {
     playNaturalAudio(base64Audio);
+  },
+  onIodUploaded: (data) => {
+    console.log('📄 IOD Document successfully ingested:', data);
+    if (activeIodPill) activeIodPill.style.display = 'inline-flex';
+    if (iodNameText) iodNameText.innerText = data.fileName;
+    if (iodCountText) iodCountText.innerText = `${data.totalConditions} CONDITIONS`;
+    if (uploadIodBtn) {
+      uploadIodBtn.classList.remove('muted');
+      const textSpan = uploadIodBtn.querySelector('span');
+      if (textSpan) textSpan.innerText = 'REPLACE IOD';
+    }
+    // Visual sphere pulse in cyan/emerald
+    targetGlowColor = CYAN.clone();
+    setTimeout(() => { targetGlowColor = GOLD.clone(); }, 2000);
+  },
+  onIodCleared: () => {
+    console.log('🗑️ Active IOD Document removed');
+    if (activeIodPill) activeIodPill.style.display = 'none';
+    if (uploadIodBtn) {
+      uploadIodBtn.classList.remove('muted');
+      const textSpan = uploadIodBtn.querySelector('span');
+      if (textSpan) textSpan.innerText = 'UPLOAD IOD';
+    }
+    if (iodFileInput) iodFileInput.value = '';
+  }
+});
+
+// --- IOD FILE UPLOAD & DRAG-AND-DROP HANDLERS ---
+function handleIodFileUpload(file: File) {
+  if (!file) return;
+  if (!file.name.toLowerCase().endsWith('.pdf')) {
+    alert('Please upload an Intimation of Disapproval (IOD) PDF document.');
+    return;
+  }
+
+  const reader = new FileReader();
+  reader.onload = () => {
+    const dataUrl = reader.result as string;
+    const base64 = dataUrl.split(',')[1];
+    if (base64) {
+      if (uploadIodBtn) {
+        uploadIodBtn.classList.add('muted');
+        const textSpan = uploadIodBtn.querySelector('span');
+        if (textSpan) textSpan.innerText = 'READING...';
+      }
+      displaySubtitle('agent', `Uploading and analyzing IOD sanction: ${file.name}...`, false);
+      wsClient.uploadIodPdf(file.name, base64);
+    }
+  };
+  reader.readAsDataURL(file);
+}
+
+uploadIodBtn?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  iodFileInput?.click();
+});
+
+iodFileInput?.addEventListener('change', () => {
+  const file = iodFileInput.files?.[0];
+  if (file) {
+    handleIodFileUpload(file);
+  }
+});
+
+iodRemoveBtn?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  wsClient.clearIodPdf();
+});
+
+// Canvas Drag & Drop handlers
+window.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  if (dragOverlay) dragOverlay.style.display = 'flex';
+});
+
+window.addEventListener('dragleave', (e) => {
+  if (e.relatedTarget === null && dragOverlay) {
+    dragOverlay.style.display = 'none';
+  }
+});
+
+window.addEventListener('drop', (e) => {
+  e.preventDefault();
+  if (dragOverlay) dragOverlay.style.display = 'none';
+  const file = e.dataTransfer?.files?.[0];
+  if (file) {
+    handleIodFileUpload(file);
   }
 });
 

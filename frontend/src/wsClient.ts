@@ -15,6 +15,8 @@ export interface WSClientCallbacks {
   onProjectsLoaded?: (projects: ProjectData[]) => void;
   onAudioStream?: (audioBase64: string) => void;
   onConnectionChange?: (connected: boolean) => void;
+  onIodUploaded?: (data: { fileName: string; totalConditions: number; iodReference?: string }) => void;
+  onIodCleared?: () => void;
 }
 
 export class AgentWSClient {
@@ -121,9 +123,33 @@ export class AgentWSClient {
         }
         break;
 
+      case 'IOD_UPLOADED':
+        if (this.callbacks.onIodUploaded) {
+          this.callbacks.onIodUploaded({
+            fileName: data.fileName || 'IOD Document',
+            totalConditions: data.totalConditions || 0,
+            iodReference: data.iodReference
+          });
+        }
+        break;
+
+      case 'IOD_CLEARED':
+        if (this.callbacks.onIodCleared) {
+          this.callbacks.onIodCleared();
+        }
+        break;
+
       default:
         console.log('Received unhandled event:', data);
     }
+  }
+
+  public uploadIodPdf(fileName: string, base64: string): void {
+    this.send({ type: 'UPLOAD_IOD_PDF', fileName, base64 });
+  }
+
+  public clearIodPdf(): void {
+    this.send({ type: 'CLEAR_IOD_PDF' });
   }
 
   public startSession(token?: string): void {

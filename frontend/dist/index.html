@@ -288,6 +288,106 @@
       box-shadow: 0 0 20px rgba(255, 77, 77, 0.5);
     }
 
+    /* Active IOD Document Pill */
+    .active-iod-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(16, 28, 20, 0.85);
+      border: 1px solid rgba(56, 239, 125, 0.4);
+      padding: 6px 12px;
+      border-radius: 20px;
+      font-size: 11px;
+      color: #38ef7d;
+      backdrop-filter: blur(10px);
+      box-shadow: 0 0 15px rgba(56, 239, 125, 0.2);
+      animation: fadeInPill 0.3s ease;
+    }
+
+    @keyframes fadeInPill {
+      from { opacity: 0; transform: translateY(-6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .active-iod-pill .iod-icon {
+      font-size: 13px;
+    }
+
+    .active-iod-pill .iod-name {
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      max-width: 180px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .active-iod-pill .iod-badge {
+      font-size: 9px;
+      background: rgba(56, 239, 125, 0.15);
+      border: 1px solid rgba(56, 239, 125, 0.3);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-weight: 700;
+      letter-spacing: 1px;
+    }
+
+    .active-iod-pill .iod-remove-btn {
+      background: transparent;
+      border: none;
+      color: #86efac;
+      font-size: 15px;
+      cursor: pointer;
+      padding: 0 3px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: color 0.2s;
+    }
+
+    .active-iod-pill .iod-remove-btn:hover {
+      color: #ffffff;
+    }
+
+    /* Drag & Drop Overlay */
+    #drag-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      background: rgba(7, 8, 6, 0.85);
+      backdrop-filter: blur(8px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      pointer-events: none;
+    }
+
+    .drag-box {
+      border: 2px dashed #38ef7d;
+      border-radius: 16px;
+      padding: 40px 60px;
+      text-align: center;
+      color: #38ef7d;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+      background: rgba(16, 28, 20, 0.6);
+      box-shadow: 0 0 40px rgba(56, 239, 125, 0.3);
+    }
+
+    .drag-title {
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: 2px;
+    }
+
+    .drag-sub {
+      font-size: 12px;
+      color: #cbd5e1;
+      font-family: 'Outfit', sans-serif;
+    }
+
     /* Bottom Subtitle & Audio Overlay */
     .subtitles-container {
       position: absolute;
@@ -488,7 +588,7 @@
       }
     }
   </style>
-  <script type="module" crossorigin src="/assets/index-CaDkBIvC.js"></script>
+  <script type="module" crossorigin src="/assets/index-B6OI0FMp.js"></script>
 </head>
 
 <body>
@@ -507,7 +607,25 @@
       </div>
     </div>
 
+    <!-- Active Ingested IOD Badge -->
+    <div class="active-iod-pill" id="active-iod-pill" style="display: none;">
+      <span class="iod-icon">📄</span>
+      <span class="iod-name" id="iod-name-text">IOD Document</span>
+      <span class="iod-badge" id="iod-count-text">0 CONDITIONS</span>
+      <button class="iod-remove-btn" id="iod-remove-btn" title="Remove IOD document">&times;</button>
+    </div>
+
     <div class="top-actions">
+      <button class="icon-btn" id="upload-iod-btn" title="Upload IOD Sanction Document (PDF)">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+          <polyline points="17 8 12 3 7 8" />
+          <line x1="12" y1="3" x2="12" y2="15" />
+        </svg>
+        <span id="upload-btn-text">UPLOAD IOD</span>
+      </button>
+      <input type="file" id="iod-file-input" accept=".pdf" style="display: none;" />
+
       <button class="icon-btn" id="mute-toggle-btn" title="Mute / Unmute Microphone">
         <svg id="mic-on-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
           stroke-width="2">
@@ -533,6 +651,19 @@
         </svg>
         <span>LOGS</span>
       </button>
+    </div>
+  </div>
+
+  <!-- Drag & Drop Overlay -->
+  <div id="drag-overlay" style="display: none;">
+    <div class="drag-box">
+      <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+        <polyline points="17 8 12 3 7 8" />
+        <line x1="12" y1="3" x2="12" y2="15" />
+      </svg>
+      <div class="drag-title">DROP IOD PDF HERE</div>
+      <div class="drag-sub">Extract sanction conditions for Stallion real estate audit</div>
     </div>
   </div>
 
