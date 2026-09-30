@@ -3,10 +3,10 @@ import path from 'path';
 import fs from 'fs';
 import OpenAI from 'openai';
 import { MCPClientManager, ProjectInfo } from './mcpClient.js';
-import { 
-  extractIodConditionsFromBuffer, 
-  processClearancePdfsInBatches, 
-  ExtractedIodDocument 
+import {
+  extractIodConditionsFromBuffer,
+  processClearancePdfsInBatches,
+  ExtractedIodDocument
 } from './documentExtractor.js';
 
 export type AIState = 'idle' | 'listening' | 'thinking' | 'speaking';
@@ -35,10 +35,12 @@ export class SphereConversationalAgent {
   private sessionStarted = false;
   private conversationHistory: any[] = [];
   private activeIodSanction: ExtractedIodDocument | null = null;
+  private lastProcessedQuery = '';
+  private lastProcessedTime = 0;
 
   constructor(remoteMcpUrl?: string) {
     const cwd = process.cwd();
-    this.hermesWorkspace = process.env.HERMES_WORKSPACE 
+    this.hermesWorkspace = process.env.HERMES_WORKSPACE
       || (fs.existsSync(path.join(cwd, 'AGENTS.md')) ? cwd : path.resolve(cwd, '..'));
 
     const binCandidates = [
@@ -78,6 +80,8 @@ export class SphereConversationalAgent {
     this.sessionStarted = false;
     this.conversationHistory = [];
     this.activeIodSanction = null;
+    this.lastProcessedQuery = '';
+    this.lastProcessedTime = 0;
   }
 
   /**
@@ -140,7 +144,7 @@ export class SphereConversationalAgent {
       const userName = profile?.data?.name || profile?.user?.name || profile?.name || 'Valued Partner';
       const projectListStr = this.userProjects.map(p => p.name).join(', ');
       const welcomeText = this.userProjects.length > 0
-        ? `Greetings ${userName}. Hermes Agent is active as your Stallion Permission & Regulatory Specialist. I have mapped your projects: ${projectListStr}. I can audit permission checklists, extract conditions from IOD documents, match missing clearances, and draft follow-up reminders.`
+        ? `Greetings ${userName}. Hermes Agent is active as your Stallion Permission & Regulatory Specialist. I have mapped your projects.`
         : `Greetings ${userName}. Hermes Agent is online as your Stallion Permission Specialist. How may I assist with your regulatory permissions and IOD conditions today?`;
 
       callbacks.onStateChange('speaking');
@@ -199,7 +203,7 @@ export class SphereConversationalAgent {
             model: 'whisper-1'
           });
           userText = transcription.text.trim();
-          try { fs.unlinkSync(tempAudioPath); } catch {}
+          try { fs.unlinkSync(tempAudioPath); } catch { }
         } catch (sttErr) {
           console.warn('⚠️ STT transcription warning:', sttErr);
         }
@@ -212,11 +216,31 @@ export class SphereConversationalAgent {
 
       // Normalize common speech recognition mis-transcriptions for Indian municipal terms
       userText = userText
-        .replace(/\biodine\b/gi, 'IOD')
-        .replace(/\bce\s*ce\b/gi, 'CC')
-        .replace(/\boh\s*see\b/gi, 'OC')
-        .replace(/\bc\s*f\s*o\b/gi, 'CFO')
-        .replace(/\bn\s*o\s*c\b/gi, 'NOC');
+        .replace(/\b(?:iodine|i\s*o\s*d|eye\s*oh\s*dee)\b/gi, 'IOD')
+        .replace(/\b(?:ce\s*ce|c\s*c|see\s*see)\b/gi, 'CC')
+        .replace(/\b(?:oh\s*see|o\s*c)\b/gi, 'OC')
+        .replace(/\b(?:c\s*f\s*o|see\s*eff\s*oh)\b/gi, 'CFO')
+        .replace(/\b(?:n\s*o\s*c|en\s*oh\s*see)\b/gi, 'NOC')
+        .replace(/\b(?:s\s*w\s*d|ess\s*double\s*you\s*dee)\b/gi, 'SWD')
+        .replace(/\b(?:m\s*c\s*g\s*m|em\s*see\s*gee\s*em)\b/gi, 'MCGM')
+        .replace(/\b(?:m\s*h\s*a\s*d\s*a|mahada)\b/gi, 'MHADA')
+        .replace(/\b(?:s\s*r\s*a|ess\s*are\s*ay)\b/gi, 'SRA');
+
+      // Deduplicate immediate duplicate queries (e.g. STT interim correction sent twice)
+      const now = Date.now();
+      const normalizedQueryKey = userText.toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (
+        normalizedQueryKey.length > 0 &&
+        normalizedQueryKey === this.lastProcessedQuery &&
+        (now - this.lastProcessedTime) < 6000
+      ) {
+        console.log(`🛡️ Deduplicating duplicate user speech turn within 6s: "${userText}"`);
+        callbacks.onStateChange('listening');
+        return;
+      }
+
+      this.lastProcessedQuery = normalizedQueryKey;
+      this.lastProcessedTime = now;
 
       callbacks.onTranscript('user', userText, true);
       callbacks.onStateChange('thinking');
@@ -557,6 +581,29 @@ Categorize findings dynamically into:
 Your mission is focused on Real Estate Permissions, Municipal Approvals (MCGM/MHADA/SRA), and Compliance Governance.${activeProjectContext}${activeIodContext}
 
 ---
+### 🎙️ CRITICAL: NATURAL EXECUTIVE SPOKEN VOICE STYLE
+Your response is spoken aloud to the developer through neural speech synthesis and displayed as live subtitles.
+DO NOT sound like a spreadsheet, a database dump, or a robotic screen reader!
+1. **NEVER recite item-by-item status lists**:
+   - ❌ STRICTLY FORBIDDEN:
+     "Permission 1 - Issued
+      Permission 2 - Issued
+      Permission 3 - Pending"
+   - ❌ STRICTLY FORBIDDEN:
+     "Condition 1 - Complied. Condition 2 - Not Complied."
+2. **ALWAYS synthesize and group naturally in conversational English**:
+   - ✅ REQUIRED STYLE (Group by status):
+     "For [Project Name], you have [N] tracked clearances. Your approved permissions on file are [Permission 1] and [Permission 2]. Meanwhile, [Permission 3] is currently pending with [Assigned Person], which blocks [Stage]."
+   - Group approved items together. Group pending or blocked items together with their responsible person and milestone impact.
+3. **Natural Phrasing for IOD / Sanction Overview**:
+   - ✅ REQUIRED STYLE:
+     "Your IOD was sanctioned on [Date] under reference number [Ref]. Key municipal conditions require obtaining CFO and Tree clearance before moving beyond the plinth level. You have already complied with [X], while [Y] is pending."
+4. **Tone & Formatting**:
+   - Speak in fluent, professional, articulate sentences.
+   - Do NOT use markdown tables or repetitive bullet hyphens in your sentences.
+   - Conclude naturally: "Would you like me to draft a follow-up reminder for [Pending Item], or inspect specific condition clauses?"
+
+---
 ### 🤝 CONVERSATIONAL & INTERACTIVE SESSION RULES
 - This is an ongoing, real-time interactive session with a real estate developer.
 - Maintain full conversational context: remember previous questions, projects, pending clearances, and recommendations discussed in earlier turns.
@@ -652,7 +699,7 @@ When the user asks to follow up or draft a reminder:
           let toolArgs: Record<string, any> = {};
           try {
             toolArgs = JSON.parse(fnCall?.arguments || '{}');
-          } catch {}
+          } catch { }
 
           // Inject current session JWT token
           if (this.jwtToken && !toolArgs.jwt_token) {
@@ -675,7 +722,7 @@ When the user asks to follow up or draft a reminder:
             try {
               let parsedPerms: any = toolResult;
               if (typeof toolResult === 'string') {
-                try { parsedPerms = JSON.parse(toolResult); } catch {}
+                try { parsedPerms = JSON.parse(toolResult); } catch { }
               }
               const permsList = parsedPerms?.permissions || parsedPerms?.data?.permissions || (Array.isArray(parsedPerms) ? parsedPerms : []);
 
@@ -716,8 +763,8 @@ When the user asks to follow up or draft a reminder:
                     }
                   } : {}),
                   audit_instructions: this.activeIodSanction
-                    ? "CRITICAL: Compare every condition in active_uploaded_iod against unified_master_clearances. Determine which conditions are COMPLIED, which are IN PROGRESS, and which are CRITICAL BLOCKERS (required for current stage like Plinth CC or Further CC but missing or unapproved in Stallion). Specifically reference clearance remarks_notes, dates, and authorities."
-                    : "Deliver a crisp, data-grounded overview and status audit of these existing project permissions. Summarize verified approvals, validities, pending items, assigned persons, and key remarks_notes. If the user asked for an overview of a specific milestone (e.g. IOD, CC, OC), identify that specific permission from all_project_permissions and call inspect_document_attachment(ai_view_url=...) to inspect its attached PDF."
+                    ? "CRITICAL: Compare every condition in active_uploaded_iod against unified_master_clearances. Group conditions naturally in conversational spoken sentences: state which are COMPLIED, which are IN PROGRESS, and which are CRITICAL BLOCKERS (required for current stage like Plinth CC or Further CC but missing or unapproved in Stallion). Specifically reference clearance remarks_notes, dates, and authorities. NEVER recite repetitive 'Condition - Status' bullet points."
+                    : "Deliver a crisp, data-grounded overview and status audit of these existing project permissions. Group permissions conversationally by status into natural spoken sentences (e.g. 'Your issued permissions are Permission 1 and Permission 2. Pending permissions are Permission 3 assigned to...'). Do NOT output repetitive 'Permission - Status' lists or recite item-by-item status tags. Summarize verified approvals, validities, pending items, assigned persons, and key remarks_notes. If the user asked for an overview of a specific milestone (e.g. IOD, CC, OC), identify that specific permission from all_project_permissions and call inspect_document_attachment(ai_view_url=...) to inspect its attached PDF."
                 };
               }
             } catch (batchErr) {
@@ -850,12 +897,17 @@ Specialized in: IOD condition clause extraction, permission checklist matching, 
 
     try {
       // 1. Clean markdown formatting, raw URLs, and table pipes for smooth natural speech
-      const cleaned = text
+      let cleaned = text
         .replace(/https?:\/\/\S+/g, '') // remove raw URL links
         .replace(/\|/g, ', ') // convert markdown table dividers to natural pauses
         .replace(/[*#`_~[\]()]/g, '') // strip markdown markers
         .replace(/\n{2,}/g, '. ') // double newlines into sentences
+        .replace(/\n/g, '. ') // single newlines into sentences
+        .replace(/\s*[-–—]\s*/g, ', ') // convert stray dashes/hyphens to natural comma pauses (never speak "dash"!)
         .replace(/\s+/g, ' ')
+        .replace(/[,.]\s*[,.]+/g, '.')
+        .replace(/\s*,\s*/g, ', ')
+        .replace(/\s*\.\s*/g, '. ')
         .trim();
 
       if (!cleaned) return;

@@ -154,13 +154,19 @@ export class AudioRecorder {
         // Reset silence debouncer to dispatch complete thought
         clearTimeout(this.silenceTimer);
         const textToDispatch = displayText;
+        // If Chrome has stabilized at least one final segment, 1000ms silence confirms completion.
+        // If still pure interim, wait 1500ms to prevent premature partial dispatch (e.g. iodine vs IOD).
+        const debounceMs = this.finalTranscriptBuffer.trim().length > 0 ? 1000 : 1500;
+
         this.silenceTimer = setTimeout(() => {
           if (textToDispatch && this.callbacks.onSpeechResult && !this.isMuted) {
             this.finalTranscriptBuffer = '';
             this.currentInterimBuffer = '';
+            // Immediately lock/mute microphone on dispatch so subsequent corrections or room sounds cannot trigger duplicate turns
+            this.setMuted(true);
             this.callbacks.onSpeechResult(textToDispatch, true);
           }
-        }, 800);
+        }, debounceMs);
       }
     };
 
