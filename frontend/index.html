@@ -48,6 +48,27 @@
       mix-blend-mode: screen;
     }
 
+    /* When Chat Mode is Active: Completely hide 3D sphere canvas and subtitles */
+    body.chat-mode-active {
+      background: radial-gradient(circle at 50% 30%, #0e130c 0%, #070806 70%, #040503 100%);
+    }
+
+    body.chat-mode-active #canvas-container {
+      display: none !important;
+    }
+
+    body.chat-mode-active #label-container {
+      display: none !important;
+    }
+
+    body.chat-mode-active .subtitles-container {
+      display: none !important;
+    }
+
+    body.chat-mode-active #start-label {
+      display: none !important;
+    }
+
     #canvas-container {
       position: absolute;
       top: 0;
@@ -158,7 +179,7 @@
       top: 24px;
       left: 28px;
       right: 28px;
-      z-index: 25;
+      z-index: 45;
       display: flex;
       justify-content: space-between;
       align-items: center;
@@ -1246,11 +1267,11 @@
   </style>
 </head>
 
-<body>
+<body class="chat-mode-active">
   <div id="canvas-container"></div>
   <div id="label-container"></div>
 
-  <div id="start-label">CLICK TO START</div>
+  <div id="start-label" class="hidden">CLICK TO START</div>
 
   <!-- Top Bar -->
   <div class="top-bar">
@@ -1298,11 +1319,13 @@
         <span id="mute-btn-text">MUTE</span>
       </button>
 
-      <button class="icon-btn" id="mode-toggle-btn" title="Toggle Chat & Text Mode">
+      <button class="icon-btn" id="mode-toggle-btn" title="Toggle 3D Sphere & Chat Mode">
         <svg id="chat-mode-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+          <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none"/>
+          <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+          <path d="M2 12h20"/>
         </svg>
-        <span id="mode-btn-text">CHAT MODE</span>
+        <span id="mode-btn-text">SPHERE VIEW</span>
       </button>
 
       <button class="icon-btn" id="history-toggle-btn">
@@ -1364,7 +1387,7 @@
   </div>
 
   <!-- Interactive Text & Markdown Chat Panel -->
-  <div id="chat-panel">
+  <div id="chat-panel" class="active">
     <div class="chat-panel-header">
       <div class="chat-panel-title-group">
         <span class="chat-status-dot"></span>

@@ -48,8 +48,8 @@ const chatVoiceToggleBtn = document.querySelector<HTMLElement>('#chat-voice-togg
 const chatVoiceIcon = document.querySelector<HTMLElement>('#chat-voice-icon')!;
 const chatAudioHint = document.querySelector<HTMLElement>('#chat-audio-hint')!;
 const quickTextInput = document.querySelector<HTMLInputElement>('#quick-text-input')!;
-const quickSendBtn = document.querySelector<HTMLElement>('#quick-send-btn')!;
-let isChatOpen = false;
+const quickSendBtn = document.querySelector<HTMLElement>('#quick-send-btn');
+let isChatOpen = true;
 let isVoicePlaybackEnabled = true;
 
 // --- AUTHORIZED PROJECT STATE & DOM ELEMENTS ---
@@ -1145,15 +1145,22 @@ function appendTranscriptHistory(speaker: 'user' | 'agent', text: string) {
 function toggleChatMode(forceOpen?: boolean) {
   isChatOpen = forceOpen !== undefined ? forceOpen : !isChatOpen;
   if (isChatOpen) {
+    document.body.classList.add('chat-mode-active');
     chatPanel.classList.add('active');
-    modeBtnText.innerText = 'SPHERE VIEW';
+    if (modeBtnText) modeBtnText.innerText = 'SPHERE VIEW';
     // Auto-focus text input in chat panel
     setTimeout(() => {
       if (chatTextInput) chatTextInput.focus();
     }, 150);
   } else {
+    document.body.classList.remove('chat-mode-active');
     chatPanel.classList.remove('active');
-    modeBtnText.innerText = 'CHAT MODE';
+    if (modeBtnText) modeBtnText.innerText = 'CHAT MODE';
+
+    // If switching to sphere view and sphere is compressed, expand it
+    if (sphereState === 'compressed' || sphereState === 'compressing') {
+      wakeUpSession();
+    }
   }
 }
 
@@ -1539,6 +1546,7 @@ function wakeUpSession() {
 
 // Wake-up Screen Click Handlers
 window.addEventListener('click', (e) => {
+  if (isChatOpen) return;
   const target = e.target as HTMLElement;
   if (
     target.closest('#chat-panel') ||
@@ -1690,6 +1698,10 @@ const clock = new THREE.Clock();
 
 function animate() {
   requestAnimationFrame(animate);
+  if (isChatOpen) {
+    // When in chat mode, do not render or animate the 3D sphere in the background
+    return;
+  }
   const elapsed = clock.getElapsedTime();
 
   currentGlowColor.lerp(targetGlowColor, 0.05);
@@ -1785,6 +1797,10 @@ function animate() {
   labelRenderer.render(scene, camera);
 }
 animate();
+
+// Auto-open in Chat Mode by default on page landing
+toggleChatMode(true);
+wakeUpSession();
 
 window.addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight;
