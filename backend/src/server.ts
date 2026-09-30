@@ -1,6 +1,7 @@
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 import { fileURLToPath } from 'url';
 import { WebSocketServer, WebSocket } from 'ws';
 import dotenv from 'dotenv';
@@ -8,6 +9,17 @@ import { SphereConversationalAgent, AIState } from './agent.js';
 import { ProjectInfo } from './mcpClient.js';
 
 dotenv.config();
+
+function getStoredTokenFallback(): string {
+  try {
+    const jsonPath = path.resolve(os.homedir(), '.hermes', 'stallion_jwt.json');
+    if (fs.existsSync(jsonPath)) {
+      const data = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
+      if (data?.token && typeof data.token === 'string') return data.token.trim();
+    }
+  } catch {}
+  return process.env.STALLION_JWT_TOKEN || process.env.MCP_STALLION_API_KEY || process.env.FALLBACK_JWT_TOKEN || '';
+}
 
 const port = parseInt(process.env.PORT || '8080', 10);
 
@@ -118,8 +130,10 @@ wss.on('connection', (ws: WebSocket) => {
 
       switch (message.type) {
         case 'SESSION_START':
-          console.log('🚀 Session started with token:', message.token ? '[TOKEN_PROVIDED]' : '[NO_TOKEN]');
-          const token = message.token || process.env.FALLBACK_JWT_TOKEN || '';
+          const token = (message.token && typeof message.token === 'string' && message.token.trim())
+            ? message.token.trim()
+            : getStoredTokenFallback();
+          console.log('🚀 Session started with token:', token ? '[TOKEN_PROVIDED]' : '[NO_TOKEN]');
           await agent.startSessionWithToken(token, callbacks);
           break;
 

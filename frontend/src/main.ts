@@ -1148,6 +1148,10 @@ function toggleChatMode(forceOpen?: boolean) {
     document.body.classList.add('chat-mode-active');
     chatPanel.classList.add('active');
     if (modeBtnText) modeBtnText.innerText = 'SPHERE VIEW';
+    // In chat mode, mute microphone so background noise doesn't trigger voice turns while user types
+    setMuteUI(true);
+    audioRecorder.setMuted(true);
+    updateAuthBadge(Boolean(userJwtToken));
     // Auto-focus text input in chat panel
     setTimeout(() => {
       if (chatTextInput) chatTextInput.focus();
@@ -1160,6 +1164,10 @@ function toggleChatMode(forceOpen?: boolean) {
     // If switching to sphere view and sphere is compressed, expand it
     if (sphereState === 'compressed' || sphereState === 'compressing') {
       wakeUpSession();
+    } else {
+      // In sphere view, unmute microphone for hands-free voice turns
+      setMuteUI(false);
+      audioRecorder.setMuted(false);
     }
   }
 }
@@ -1238,6 +1246,18 @@ function submitUserTextQuery(text: string) {
   // Auto wake up session if currently dormant
   if (sphereState === 'compressed' || sphereState === 'compressing') {
     wakeUpSession();
+  }
+
+  // Detect if user pasted a JWT authentication token directly into chat input
+  if (clean.startsWith('eyJ') && clean.length > 40) {
+    userJwtToken = clean;
+    try {
+      localStorage.setItem('stallion_jwt_token', clean);
+      localStorage.setItem('authToken', clean);
+    } catch {}
+    updateAuthBadge(true);
+    console.log('🔑 JWT token provided in chat input. Re-authenticating session...');
+    wsClient.startSession(clean);
   }
 
   // Display user message in chat and history drawer ONCE
@@ -1371,6 +1391,19 @@ function clearChatFeed() {
 
 // WebSocket Event Listeners
 wsClient.connect({
+  onConnectionChange: (connected) => {
+    console.log('⚡ WebSocket connection changed:', connected ? 'OPEN' : 'CLOSED');
+    if (connected) {
+      if (userJwtToken) {
+        console.log('🔑 Auto-dispatching session start with verified JWT token');
+        wsClient.startSession(userJwtToken);
+        updateAuthBadge(true);
+      } else {
+        wsClient.startSession();
+        updateAuthBadge(false);
+      }
+    }
+  },
   onStateChange: (state) => {
     // If backend reports listening but frontend is still actively playing synthesized audio chunks,
     // hold UI in speaking state and mic muted until playback completes
@@ -1390,6 +1423,7 @@ wsClient.connect({
     console.log('🌟 Dynamic User Projects loaded:', projects);
     authorizedProjects = Array.isArray(projects) ? projects : [];
     if (authorizedProjects.length > 0) {
+      updateAuthBadge(true);
       if (!selectedAuthorizedProject || !authorizedProjects.some(p => p.id === selectedAuthorizedProject!.id)) {
         selectedAuthorizedProject = authorizedProjects[0];
       }
@@ -1501,9 +1535,39 @@ historyDrawer.addEventListener('click', (e) => {
   e.stopPropagation();
 });
 
-// --- JWT TOKEN EXTRACTION FROM URL ---
+// --- JWT TOKEN EXTRACTION FROM URL & LOCALSTORAGE PERSISTENCE ---
 const urlParams = new URLSearchParams(window.location.search);
-const userJwtToken = urlParams.get('token') || urlParams.get('jwt') || urlParams.get('bearer') || '';
+let userJwtToken = urlParams.get('token') || urlParams.get('jwt') || urlParams.get('bearer') || '';
+
+if (userJwtToken) {
+  try {
+    localStorage.setItem('stallion_jwt_token', userJwtToken);
+    localStorage.setItem('authToken', userJwtToken);
+  } catch {}
+} else {
+  try {
+    userJwtToken =
+      localStorage.getItem('stallion_jwt_token') ||
+      localStorage.getItem('authToken') ||
+      localStorage.getItem('jwt_token') ||
+      localStorage.getItem('token') ||
+      '';
+  } catch {}
+}
+
+function updateAuthBadge(isAuthenticated: boolean) {
+  const badge = document.getElementById('chat-auth-badge');
+  if (!badge) return;
+  if (isAuthenticated) {
+    badge.textContent = '🔑 Stallion Auth';
+    badge.className = 'chat-auth-badge auth-verified';
+    badge.title = 'Authenticated with Stallion JWT Token';
+  } else {
+    badge.textContent = '🔒 Guest';
+    badge.className = 'chat-auth-badge';
+    badge.title = 'In Guest mode - paste JWT token or say login to authenticate';
+  }
+}
 
 function wakeUpSession() {
   if (sphereState === 'expanded' || sphereState === 'expanding') return;
@@ -1517,8 +1581,14 @@ function wakeUpSession() {
   sphereShells.forEach((shell) => (shell.visible = true));
   if (startLabel) startLabel.classList.add('hidden');
 
-  // On wake up, microphone is unmuted by default
-  setMuteUI(false);
+  // In chat mode, default microphone to muted so typing isn't interrupted by noise
+  if (isChatOpen) {
+    setMuteUI(true);
+    audioRecorder.setMuted(true);
+  } else {
+    setMuteUI(false);
+  }
+  updateAuthBadge(Boolean(userJwtToken));
   wsClient.startSession(userJwtToken);
 
   // Open VAD Microphone Session
@@ -1657,6 +1727,10 @@ if (projectSelectorDropdown) {
     const found = authorizedProjects.find(p => p.id === chosenId);
     if (found) {
       selectedAuthorizedProject = found;
+      if (chatProjectTag) {
+        chatProjectTag.style.display = 'inline-block';
+        chatProjectTag.innerText = `🏢 ${found.name}`;
+      }
       updateQuickChips();
       setProjectHighlight(found.name, true);
       console.log('🏢 Switched active authorized project to:', found.name, found.id);

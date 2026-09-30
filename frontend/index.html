@@ -28,11 +28,18 @@
       padding: 0;
     }
 
+    html,
     body {
-      background: var(--bg-dark);
+      width: 100%;
+      height: 100%;
+      min-height: 100vh;
+      background-color: #070806 !important;
+      background: radial-gradient(circle at 50% 20%, #121810 0%, #070806 65%, #030403 100%) !important;
       color: #e2e8f0;
       overflow: hidden;
       font-family: "IBM Plex Mono", Consolas, monospace;
+      margin: 0;
+      padding: 0;
       user-select: none;
     }
 
@@ -42,15 +49,19 @@
       inset: 0;
       z-index: 15;
       pointer-events: none;
-      opacity: 0.15;
-      background-image: linear-gradient(rgba(255, 245, 189, 0.025) 1px, transparent 1px);
+      opacity: 0.12;
+      background-image: linear-gradient(rgba(255, 245, 189, 0.02) 1px, transparent 1px);
       background-size: 100% 4px;
-      mix-blend-mode: screen;
     }
 
     /* When Chat Mode is Active: Completely hide 3D sphere canvas and subtitles */
     body.chat-mode-active {
-      background: radial-gradient(circle at 50% 30%, #0e130c 0%, #070806 70%, #040503 100%);
+      background-color: #070806 !important;
+      background: radial-gradient(circle at 50% 20%, #141c12 0%, #070806 65%, #030403 100%) !important;
+    }
+
+    body.chat-mode-active::after {
+      display: none !important;
     }
 
     body.chat-mode-active #canvas-container {
@@ -685,16 +696,18 @@
        ========================================================================== */
     #chat-panel {
       position: fixed;
-      top: 76px;
-      bottom: 20px;
+      top: 72px;
+      bottom: 18px;
       left: 50%;
       transform: translateX(-50%) translateY(30px);
-      width: min(920px, 94vw);
-      background: rgba(8, 11, 7, 0.92);
-      border: 1px solid rgba(216, 189, 92, 0.35);
+      width: min(1080px, 94vw);
+      max-width: 1120px;
+      background: rgba(10, 13, 9, 0.95);
+      border: 1px solid rgba(216, 189, 92, 0.32);
       border-radius: 16px;
-      backdrop-filter: blur(28px);
-      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.85), 0 0 35px rgba(216, 189, 92, 0.15);
+      backdrop-filter: blur(32px);
+      -webkit-backdrop-filter: blur(32px);
+      box-shadow: 0 24px 70px rgba(0, 0, 0, 0.9), 0 0 40px rgba(216, 189, 92, 0.12);
       z-index: 35;
       display: flex;
       flex-direction: column;
@@ -710,12 +723,12 @@
     }
 
     .chat-panel-header {
-      padding: 16px 22px;
+      padding: 14px 22px;
       border-bottom: 1px solid rgba(216, 189, 92, 0.2);
       display: flex;
       justify-content: space-between;
       align-items: center;
-      background: rgba(14, 18, 12, 0.6);
+      background: rgba(13, 17, 12, 0.85);
       border-radius: 16px 16px 0 0;
     }
 
@@ -750,6 +763,28 @@
       border-radius: 4px;
       font-weight: 600;
       letter-spacing: 1px;
+    }
+
+    .chat-auth-badge {
+      font-size: 9px;
+      background: rgba(216, 189, 92, 0.12);
+      border: 1px solid rgba(216, 189, 92, 0.3);
+      color: var(--gold-primary);
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-weight: 600;
+      letter-spacing: 0.8px;
+      text-transform: uppercase;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .chat-auth-badge.auth-verified {
+      background: rgba(56, 239, 125, 0.15);
+      border-color: rgba(56, 239, 125, 0.45);
+      color: #86efac;
+      box-shadow: 0 0 10px rgba(56, 239, 125, 0.2);
     }
 
     .chat-panel-actions {
@@ -894,45 +929,51 @@
 
     .chat-msg.user {
       align-self: flex-end;
-      max-width: 82%;
+      max-width: 86%;
     }
 
     .chat-msg.user .chat-msg-sender {
       color: #38ef7d;
+      font-weight: 700;
     }
 
     .chat-msg.user .chat-msg-content {
-      background: rgba(16, 38, 24, 0.85);
-      border: 1px solid rgba(56, 239, 125, 0.4);
-      border-radius: 12px 2px 12px 12px;
+      background: rgba(14, 38, 22, 0.9);
+      border: 1px solid rgba(56, 239, 125, 0.45);
+      border-radius: 14px 2px 14px 14px;
       padding: 12px 18px;
       color: #f0fdf4;
       font-family: 'Outfit', sans-serif;
       font-size: 13.5px;
-      line-height: 1.5;
-      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4), 0 0 14px rgba(56, 239, 125, 0.15);
+      line-height: 1.55;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.45), 0 0 14px rgba(56, 239, 125, 0.15);
+      word-break: break-word;
+      overflow-wrap: anywhere;
     }
 
     .chat-msg.agent {
       align-self: flex-start;
-      max-width: 95%;
+      max-width: 98%;
       width: 100%;
     }
 
     .chat-msg.agent .chat-msg-sender {
       color: var(--gold-bright);
+      font-weight: 700;
     }
 
     .chat-msg.agent .chat-msg-content {
-      background: rgba(13, 16, 11, 0.88);
-      border: 1px solid rgba(216, 189, 92, 0.3);
+      background: rgba(13, 17, 12, 0.94);
+      border: 1px solid rgba(216, 189, 92, 0.28);
       border-radius: 2px 14px 14px 14px;
-      padding: 16px 20px;
+      padding: 18px 24px;
       color: #f8fafc;
       font-family: 'Outfit', sans-serif;
       font-size: 14px;
-      line-height: 1.62;
-      box-shadow: 0 6px 25px rgba(0, 0, 0, 0.6), 0 0 20px rgba(216, 189, 92, 0.1);
+      line-height: 1.65;
+      box-shadow: 0 6px 28px rgba(0, 0, 0, 0.65), 0 0 20px rgba(216, 189, 92, 0.08);
+      word-break: break-word;
+      overflow-wrap: anywhere;
     }
 
     /* Markdown Components Inside Agent Messages & Logs */
@@ -1190,7 +1231,7 @@
       display: flex;
       justify-content: space-between;
       font-size: 10px;
-      color: #64748b;
+      color: #94a3b8;
       padding: 0 4px;
       letter-spacing: 0.5px;
     }
@@ -1392,6 +1433,7 @@
       <div class="chat-panel-title-group">
         <span class="chat-status-dot"></span>
         <span class="chat-panel-title">Hermes Intelligence Chat</span>
+        <span class="chat-auth-badge" id="chat-auth-badge">🔒 Guest</span>
         <span class="chat-panel-project-tag" id="chat-project-tag" style="display: none;">🏢 Active Project</span>
       </div>
       <div class="chat-panel-actions">

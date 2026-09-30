@@ -25,6 +25,8 @@ export class AgentWSClient {
   private callbacks: WSClientCallbacks = {};
   private reconnectTimer: any = null;
   private isExplicitlyClosed = false;
+  private pendingQueue: any[] = [];
+  private activeToken: string = '';
 
   constructor(url?: string) {
     if (url) {
@@ -52,6 +54,16 @@ export class AgentWSClient {
 
       this.ws.onopen = () => {
         console.log('⚡ Connected to Neural Sphere WebSocket Backend');
+        // Flush any queued messages that were buffered while connecting
+        while (this.pendingQueue.length > 0) {
+          const queued = this.pendingQueue.shift();
+          try {
+            this.ws?.send(JSON.stringify(queued));
+            console.log('📤 Dispatched buffered WebSocket message:', queued.type);
+          } catch (qErr) {
+            console.warn('Failed to flush buffered message:', qErr);
+          }
+        }
         if (this.callbacks.onConnectionChange) {
           this.callbacks.onConnectionChange(true);
         }
@@ -153,7 +165,19 @@ export class AgentWSClient {
   }
 
   public startSession(token?: string): void {
-    this.send({ type: 'SESSION_START', token });
+    if (token && token.trim()) {
+      this.activeToken = token.trim();
+    }
+    const tokenToSend = this.activeToken || (token && token.trim()) || '';
+    this.send({ type: 'SESSION_START', token: tokenToSend });
+  }
+
+  public getActiveToken(): string {
+    return this.activeToken;
+  }
+
+  public setActiveToken(token: string): void {
+    if (token) this.activeToken = token.trim();
   }
 
   public endSession(): void {
@@ -172,7 +196,16 @@ export class AgentWSClient {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(data));
     } else {
-      console.warn('Cannot send, WebSocket is not open.');
+      console.log(`⏳ WebSocket not yet OPEN (readyState=${this.ws ? this.ws.readyState : 'null'}). Buffering message: ${data.type}`);
+      // Deduplicate SESSION_START in buffer
+      if (data.type === 'SESSION_START') {
+        const existingIdx = this.pendingQueue.findIndex(item => item.type === 'SESSION_START');
+        if (existingIdx !== -1) {
+          this.pendingQueue[existingIdx] = data;
+          return;
+        }
+      }
+      this.pendingQueue.push(data);
     }
   }
 
