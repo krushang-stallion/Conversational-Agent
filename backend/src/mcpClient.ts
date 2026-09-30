@@ -501,7 +501,7 @@ export class MCPClientManager {
       // Auto-resolution fallback: if no direct URL was passed, lookup from project permissions
       if (!docUrl && (finalArgs.permission_name || finalArgs.permission_id || finalArgs.file_id)) {
         try {
-          const projectId = finalArgs.project_id || '257';
+          const projectId = finalArgs.project_id || '238';
           const permsResult: any = await this.executeTool('get_project_permissions', { project_id: projectId });
           const permsList = permsResult?.permissions || permsResult?.data?.permissions || (Array.isArray(permsResult) ? permsResult : []);
           
@@ -524,6 +524,13 @@ export class MCPClientManager {
       if (docUrl) {
         return extractPdfTextFromUrl(docUrl, this.jwtToken);
       }
+
+      return {
+        status: 'no_document',
+        message: `No attached approval document or PDF was found for "${finalArgs.permission_name || finalArgs.permission_id || 'the requested permission'}". Please verify if a sanction PDF or clearance file has been uploaded to Stallion for this milestone.`,
+        permission_name: finalArgs.permission_name,
+        permission_id: finalArgs.permission_id
+      };
     }
 
     if (name === 'draft_permission_followup') {

@@ -33,12 +33,26 @@ export class AudioRecorder {
   public setMuted(muted: boolean): void {
     this.isMuted = muted;
     clearTimeout(this.silenceTimer);
+    clearTimeout(this.restartTimer);
     this.finalTranscriptBuffer = '';
     this.currentInterimBuffer = '';
 
-    // If unmuting and recognition is running but inactive, ensure it is active
-    if (!muted && this.isRunning && this.recognition && !this.isRecognitionActive) {
-      this.safeStartRecognition();
+    if (muted) {
+      // Abort recognition immediately to cleanly sever Chrome speech server connection
+      // and prevent echo from computer speakers polluting the speech recognizer
+      if (this.recognition && this.isRecognitionActive) {
+        this.isRecognitionActive = false;
+        try {
+          this.recognition.abort();
+        } catch (e) {
+          try { this.recognition.stop(); } catch (e2) {}
+        }
+      }
+    } else {
+      // Immediately start a fresh, zero-latency speech recognition session
+      if (this.isRunning && this.recognition && !this.isRecognitionActive) {
+        this.safeStartRecognition();
+      }
     }
   }
 
@@ -80,14 +94,19 @@ export class AudioRecorder {
   }
 
   private safeStartRecognition() {
-    if (!this.recognition || !this.isRunning || this.isRecognitionActive) return;
+    if (!this.recognition || !this.isRunning || this.isMuted || this.isRecognitionActive) return;
     try {
       this.recognition.start();
       this.isRecognitionActive = true;
     } catch (e: any) {
-      // If recognition is already started, keep active flag in sync
       if (e?.name === 'InvalidStateError') {
-        this.isRecognitionActive = true;
+        // Recognition is still transitioning/shutting down. Retry in 60ms.
+        clearTimeout(this.restartTimer);
+        this.restartTimer = setTimeout(() => {
+          if (this.isRunning && !this.isMuted && !this.isRecognitionActive) {
+            this.safeStartRecognition();
+          }
+        }, 60);
       }
     }
   }
@@ -136,7 +155,7 @@ export class AudioRecorder {
         clearTimeout(this.silenceTimer);
         const textToDispatch = displayText;
         this.silenceTimer = setTimeout(() => {
-          if (textToDispatch && this.callbacks.onSpeechResult) {
+          if (textToDispatch && this.callbacks.onSpeechResult && !this.isMuted) {
             this.finalTranscriptBuffer = '';
             this.currentInterimBuffer = '';
             this.callbacks.onSpeechResult(textToDispatch, true);
@@ -146,7 +165,7 @@ export class AudioRecorder {
     };
 
     this.recognition.onerror = (event: any) => {
-      if (event.error !== 'no-speech') {
+      if (event.error !== 'no-speech' && event.error !== 'aborted') {
         console.warn('Speech recognition warning:', event.error);
       }
       if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
@@ -158,13 +177,13 @@ export class AudioRecorder {
     this.recognition.onend = () => {
       this.isRecognitionActive = false;
       clearTimeout(this.restartTimer);
-      if (this.isRunning) {
-        // Automatically restart speech recognition after brief pause
+      // Immediately restart if active and not muted
+      if (this.isRunning && !this.isMuted) {
         this.restartTimer = setTimeout(() => {
-          if (this.isRunning && !this.isRecognitionActive) {
+          if (this.isRunning && !this.isMuted && !this.isRecognitionActive) {
             this.safeStartRecognition();
           }
-        }, 150);
+        }, 50);
       }
     };
   }
@@ -207,8 +226,10 @@ export class AudioRecorder {
 
     if (this.recognition) {
       try {
-        this.recognition.stop();
-      } catch (e) {}
+        this.recognition.abort();
+      } catch (e) {
+        try { this.recognition.stop(); } catch (e2) {}
+      }
     }
 
     if (this.animFrameId) {

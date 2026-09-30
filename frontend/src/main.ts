@@ -1083,6 +1083,12 @@ function appendTranscriptHistory(speaker: 'user' | 'agent', text: string) {
 // WebSocket Event Listeners
 wsClient.connect({
   onStateChange: (state) => {
+    // If backend reports listening but frontend is still actively playing synthesized audio chunks,
+    // hold UI in speaking state and mic muted until playback completes
+    if (state === 'listening' && isPlayingAudio) {
+      console.log('⏳ Holding speaking state until audio queue finishes');
+      return;
+    }
     updateStatusUI(state);
   },
   onNodeActive: (nodeModule) => {
@@ -1235,6 +1241,9 @@ window.addEventListener('click', () => {
       onSpeechResult: (text, isFinal) => {
         displaySubtitle('user', text, isFinal);
         if (isFinal) {
+          // Immediately mute microphone and enter thinking state so ambient sound doesn't trigger spurious turns
+          audioRecorder.setMuted(true);
+          updateStatusUI('thinking');
           wsClient.sendUserSpeech(text);
         }
       },
