@@ -170,11 +170,22 @@ export function sanitizePermissionsPayload(rawData: any): any {
     };
   });
 
-  const cleanResult = {
-    success: true,
-    total_permissions: sanitizedPermissions.length,
-    permissions: sanitizedPermissions
-  };
+    const inspectableDocuments = sanitizedPermissions
+      .filter(p => p.ai_view_url && (p.file_name?.toLowerCase().endsWith('.pdf') || p.ai_view_url.toLowerCase().includes('.pdf')))
+      .map(p => ({
+        permission_name: p.name,
+        file_name: p.file_name,
+        ai_view_url: p.ai_view_url,
+        action: `Call inspect_document_attachment(ai_view_url="${p.ai_view_url}") to read and extract sanction conditions for ${p.name}.`
+      }));
+
+    const cleanResult = {
+      success: true,
+      total_permissions: sanitizedPermissions.length,
+      audit_instruction: "CRITICAL FOR AUDIT: Call inspect_document_attachment on the attached sanction PDF(s) below to read their actual municipal conditions, stages, and clauses before delivering your audit response.",
+      sanction_documents_to_inspect: inspectableDocuments.slice(0, 3),
+      permissions: sanitizedPermissions
+    };
 
   if (isWrappedInContent) {
     return {

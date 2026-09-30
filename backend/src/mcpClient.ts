@@ -26,7 +26,7 @@ function getScriptPath(scriptName: string): string {
 const SPECIALIZED_PERMISSION_TOOLS: MCPToolDeclaration[] = [
   {
     name: 'inspect_document_attachment',
-    description: 'Read and extract municipal conditions, clauses, and NOC requirements directly from an approval PDF using the pre-signed S3 URL in "ai_view_url" from get_project_permissions (requires ZERO authentication).',
+    description: 'MANDATORY FOR AUDITS: Read and extract municipal conditions, sanction clauses, and NOC requirements directly from an approval PDF (IOD, Amendment letter, CC, NOC) using the pre-signed S3 URL in "ai_view_url" from get_project_permissions (requires ZERO authentication). When performing a permission audit, ALWAYS call this tool on the attached sanction PDF(s) to extract the actual conditions.',
     parameters: {
       type: 'object',
       properties: {

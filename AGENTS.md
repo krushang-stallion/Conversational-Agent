@@ -29,7 +29,7 @@ PROJECT ──► PERMISSION AGENT
 When asked about permissions or compliance:
 1. Call `get_project_permissions(project_id="...")` to fetch active and pending permissions.
    *(Payload is automatically sanitized to prevent >128k token overload).*
-2. Inspect attached IOD, CC, or LOI documents using the direct pre-signed S3 links in `ai_view_url`.
+2. Inspect attached approval documents: Call `inspect_document_attachment(ai_view_url="...")` to extract actual condition clauses, requirements, and stages from attached IOD, Amendment, or CC PDFs.
 3. Compare extracted conditions against Stallion records:
    - Identify which clearances are uploaded and approved.
    - Flag which clearances are missing or overdue.

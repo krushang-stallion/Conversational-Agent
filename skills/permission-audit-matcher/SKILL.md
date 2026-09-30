@@ -20,18 +20,24 @@ Use this skill to audit project permissions and cross-reference municipal requir
    ```bash
    get_project_permissions(project_id="...")
    ```
-   *Note: Tool results are automatically sanitized to prevent >128k token overload.*
+   *Note: Tool results are automatically sanitized and surface pre-signed S3 links in `ai_view_url`.*
 
-2. **Match Extracted Conditions**:
-   Compare each required clearance from the IOD checklist against the permissions uploaded in Stallion:
+2. **Inspect Attached Approval Documents**:
+   ```bash
+   inspect_document_attachment(ai_view_url="<ai_view_url>")
+   ```
+   Read and extract municipal conditions, clauses, and stage requirements from primary sanction PDFs (e.g. IOD, Amendment letters, NOCs).
+
+3. **Match Extracted Conditions Against Stallion Checklist**:
+   Compare each required condition from the sanction document against the permissions uploaded in Stallion:
    - **Matched & Active**: Document uploaded, approved, and within validity date.
    - **Uploaded but Pending**: Document uploaded under review or awaiting NOC receipt.
-   - **Missing / Not Uploaded**: Required by IOD condition but not present in Stallion database.
+   - **Missing / Not Uploaded**: Required by IOD/sanction condition but not present in Stallion database.
 
-3. **Construction Blocker Analysis**:
+4. **Construction Blocker Analysis**:
    Map pending or missing clearances dynamically to their actual construction milestone impact based on the real permissions data and any extracted IOD conditions. Do not force fixed boilerplate phase templates or assume placeholder clearances that are absent from project records.
 
-4. **Dynamic Audit Output**:
+5. **Dynamic Audit Output**:
    Present findings dynamically based strictly on the fetched tool data:
    - Provide real status breakdowns (Issued/Approved vs. Pending/In-Process).
    - Detail genuine bottlenecks with assigned owners, expiry dates, and real-world impact.
