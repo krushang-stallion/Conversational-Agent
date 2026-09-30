@@ -52,6 +52,19 @@ const quickSendBtn = document.querySelector<HTMLElement>('#quick-send-btn')!;
 let isChatOpen = false;
 let isVoicePlaybackEnabled = true;
 
+// --- AUTHORIZED PROJECT STATE & DOM ELEMENTS ---
+const projectSelectorContainer = document.querySelector<HTMLElement>('#project-selector-container');
+const projectSelectorDropdown = document.querySelector<HTMLSelectElement>('#project-selector-dropdown');
+const chatProjectTag = document.querySelector<HTMLElement>('#chat-project-tag');
+let authorizedProjects: ProjectData[] = [];
+let selectedAuthorizedProject: ProjectData | null = null;
+
+// Speech and text deduplication state to prevent triplicate chat bubble rendering
+let lastUserChatMessage = '';
+let lastUserChatTime = 0;
+let lastUserTranscript = '';
+let lastUserTranscriptTime = 0;
+
 // --- IOD UPLOAD & DOCUMENT DOM ELEMENTS ---
 const uploadIodBtn = document.querySelector<HTMLElement>('#upload-iod-btn');
 const iodFileInput = document.querySelector<HTMLInputElement>('#iod-file-input');
@@ -1085,14 +1098,26 @@ function displaySubtitle(speaker: 'user' | 'agent', text: string, isFinal: boole
     setProjectHighlight(null, false);
   }
 
-  if (isFinal) {
-    appendTranscriptHistory(speaker, text);
+  if (isFinal && speaker === 'agent') {
+    appendTranscriptHistory('agent', text);
     removeChatTypingIndicator();
-    appendChatMessage(speaker, text);
+    appendChatMessage('agent', text);
   }
 }
 
 function appendTranscriptHistory(speaker: 'user' | 'agent', text: string) {
+  if (!text || !text.trim()) return;
+  const clean = text.trim();
+
+  if (speaker === 'user') {
+    const now = Date.now();
+    if (clean.toLowerCase() === lastUserTranscript.toLowerCase() && (now - lastUserTranscriptTime) < 5000) {
+      return;
+    }
+    lastUserTranscript = clean;
+    lastUserTranscriptTime = now;
+  }
+
   const emptyNote = drawerBody.querySelector('div[style*="text-align: center"]');
   if (emptyNote) emptyNote.remove();
 
@@ -1100,7 +1125,7 @@ function appendTranscriptHistory(speaker: 'user' | 'agent', text: string) {
   entry.className = 'history-entry';
   entry.innerHTML = `
     <div class="history-role ${speaker}">${speaker === 'user' ? 'User' : 'Neural Core'}</div>
-    <div class="history-content">${text}</div>
+    <div class="history-content">${clean}</div>
   `;
   drawerBody.appendChild(entry);
   drawerBody.scrollTop = drawerBody.scrollHeight;
@@ -1149,6 +1174,18 @@ function removeChatTypingIndicator() {
 
 function appendChatMessage(speaker: 'user' | 'agent', text: string) {
   if (!text || !text.trim()) return;
+  const clean = text.trim();
+
+  // Deduplication guard: ignore duplicate user messages within 5 seconds
+  if (speaker === 'user') {
+    const now = Date.now();
+    if (clean.toLowerCase() === lastUserChatMessage.toLowerCase() && (now - lastUserChatTime) < 5000) {
+      console.log('🛡️ Suppressed duplicate user chat bubble:', clean);
+      return;
+    }
+    lastUserChatMessage = clean;
+    lastUserChatTime = now;
+  }
 
   // Remove the initial welcome card once real conversation starts
   if (chatWelcomeCard && chatFeed.contains(chatWelcomeCard)) {
@@ -1162,8 +1199,8 @@ function appendChatMessage(speaker: 'user' | 'agent', text: string) {
   const senderName = speaker === 'user' ? 'YOU' : 'HERMES SPECIALIST';
 
   const contentHtml = speaker === 'user'
-    ? `<div class="chat-msg-content">${text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br/>')}</div>`
-    : `<div class="chat-msg-content">${renderMarkdown(text)}</div>`;
+    ? `<div class="chat-msg-content">${clean.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br/>')}</div>`
+    : `<div class="chat-msg-content">${renderMarkdown(clean)}</div>`;
 
   msgEl.innerHTML = `
     <div class="chat-msg-header">
@@ -1186,14 +1223,15 @@ function submitUserTextQuery(text: string) {
     wakeUpSession();
   }
 
-  // Display user message in chat
+  // Display user message in chat and history drawer ONCE
   appendChatMessage('user', clean);
+  appendTranscriptHistory('user', clean);
 
   // Show typing animation in chat feed
   showChatTypingIndicator();
 
-  // Display in subtitle card
-  displaySubtitle('user', clean, true);
+  // Display in subtitle card without re-appending
+  displaySubtitle('user', clean, false);
 
   // Mute microphone while thinking so user typing / room noise doesn't trigger speech turns
   audioRecorder.setMuted(true);
@@ -1210,19 +1248,105 @@ function submitUserTextQuery(text: string) {
   wsClient.sendUserSpeech(clean);
 }
 
+function updateProjectSelectorUI() {
+  if (!projectSelectorContainer || !projectSelectorDropdown) return;
+  if (!authorizedProjects || authorizedProjects.length === 0) {
+    projectSelectorContainer.style.display = 'none';
+    if (chatProjectTag) chatProjectTag.style.display = 'none';
+    return;
+  }
+
+  projectSelectorContainer.style.display = 'inline-flex';
+  projectSelectorDropdown.innerHTML = '';
+
+  authorizedProjects.forEach((p) => {
+    const opt = document.createElement('option');
+    opt.value = p.id;
+    opt.textContent = `${p.name} (ID: ${p.id})`;
+    if (selectedAuthorizedProject && selectedAuthorizedProject.id === p.id) {
+      opt.selected = true;
+    }
+    projectSelectorDropdown.appendChild(opt);
+  });
+
+  if (chatProjectTag && selectedAuthorizedProject) {
+    chatProjectTag.style.display = 'inline-block';
+    chatProjectTag.innerText = `🏢 ${selectedAuthorizedProject.name}`;
+  }
+}
+
+function updateQuickChips() {
+  const p = selectedAuthorizedProject;
+  const auditQuery = p
+    ? `Audit permissions for ${p.name} (ID: ${p.id}) and give me an overview`
+    : `Audit permissions for the active project and give me an overview`;
+  const auditLabel = p ? `📋 Audit ${p.name}` : `📋 Audit Permissions`;
+
+  const iodQuery = p ? `What is the overview of IOD for ${p.name}?` : `What is the overview of IOD?`;
+  const ccQuery = p ? `What is the overview of Commencement Certificate (CC) for ${p.name}?` : `What is the overview of Commencement Certificate (CC)?`;
+  const followupQuery = p ? `Draft a follow-up reminder for the CFO NOC for ${p.name} to Rajesh Sharma` : `Draft a follow-up reminder for the CFO NOC to Rajesh Sharma`;
+
+  // Update sphere view chips
+  const sphereAudit = document.querySelector<HTMLElement>('#sphere-chip-audit');
+  if (sphereAudit) {
+    sphereAudit.dataset.query = auditQuery;
+    sphereAudit.innerText = auditLabel;
+  }
+  const sphereIod = document.querySelector<HTMLElement>('#sphere-chip-iod');
+  if (sphereIod) sphereIod.dataset.query = iodQuery;
+  const sphereCc = document.querySelector<HTMLElement>('#sphere-chip-cc');
+  if (sphereCc) sphereCc.dataset.query = ccQuery;
+  const sphereFollowup = document.querySelector<HTMLElement>('#sphere-chip-followup');
+  if (sphereFollowup) sphereFollowup.dataset.query = followupQuery;
+
+  // Update chat panel chips
+  const chatAudit = document.querySelector<HTMLElement>('#chat-chip-audit');
+  if (chatAudit) {
+    chatAudit.dataset.query = auditQuery;
+    chatAudit.innerText = auditLabel;
+  }
+  const chatIod = document.querySelector<HTMLElement>('#chat-chip-iod');
+  if (chatIod) chatIod.dataset.query = iodQuery;
+  const chatCc = document.querySelector<HTMLElement>('#chat-chip-cc');
+  if (chatCc) chatCc.dataset.query = ccQuery;
+  const chatFollowup = document.querySelector<HTMLElement>('#chat-chip-followup');
+  if (chatFollowup) chatFollowup.dataset.query = followupQuery;
+
+  if (chatProjectTag && p) {
+    chatProjectTag.style.display = 'inline-block';
+    chatProjectTag.innerText = `🏢 ${p.name}`;
+  }
+}
+
 function clearChatFeed() {
+  const p = selectedAuthorizedProject;
+  const auditQuery = p
+    ? `Audit permissions for ${p.name} (ID: ${p.id}) and give me an overview`
+    : `Audit permissions for the active project and give me an overview`;
+  const auditLabel = p ? `📋 Audit ${p.name}` : `📋 Audit Permissions`;
+  const iodQuery = p ? `What is the overview of IOD for ${p.name}?` : `What is the overview of IOD?`;
+  const ccQuery = p ? `What is the overview of Commencement Certificate (CC) for ${p.name}?` : `What is the overview of Commencement Certificate (CC)?`;
+
+  let projectChipsHtml = '';
+  if (authorizedProjects.length > 1) {
+    projectChipsHtml = authorizedProjects.map(proj =>
+      `<button class="quick-chip" data-query="Audit permissions for ${proj.name} (ID: ${proj.id}) and give me an overview">🏢 ${proj.name}</button>`
+    ).join(' ');
+  }
+
   chatFeed.innerHTML = `
     <div class="chat-welcome-card" id="chat-welcome-card">
       <div class="chat-welcome-icon">⚡</div>
       <div class="chat-welcome-title">Stallion Regulatory & Permission Intelligence</div>
       <div class="chat-welcome-text">
-        Chat history cleared. Type queries to audit permissions, inspect IOD & CC conditions, or draft WhatsApp follow-up reminders. Responses are rendered with full Markdown tables and badges.
+        Chat history cleared. Select an authorized project or type queries to audit permissions, inspect IOD & CC conditions, and draft WhatsApp follow-up reminders.
       </div>
-      <div class="chat-quick-chips">
-        <button class="quick-chip" data-query="Audit permissions for Project 238 and give me an overview">📋 Audit Permissions</button>
-        <button class="quick-chip" data-query="What is the overview of IOD?">📑 IOD Overview</button>
-        <button class="quick-chip" data-query="What is the overview of Commencement Certificate (CC)?">🏗️ CC Overview</button>
-        <button class="quick-chip" data-query="Draft a follow-up reminder for the CFO NOC to Rajesh Sharma">🚨 CFO Follow-Up</button>
+      <div class="chat-quick-chips" id="chat-quick-chips-container">
+        <button class="quick-chip" id="chat-chip-audit" data-query="${auditQuery}">${auditLabel}</button>
+        ${projectChipsHtml}
+        <button class="quick-chip" id="chat-chip-iod" data-query="${iodQuery}">📑 IOD Overview</button>
+        <button class="quick-chip" id="chat-chip-cc" data-query="${ccQuery}">🏗️ CC Overview</button>
+        <button class="quick-chip" id="chat-chip-followup" data-query="Draft a follow-up reminder for the CFO NOC to Rajesh Sharma">🚨 CFO Follow-Up</button>
       </div>
     </div>
   `;
@@ -1247,9 +1371,22 @@ wsClient.connect({
   },
   onProjectsLoaded: (projects) => {
     console.log('🌟 Dynamic User Projects loaded:', projects);
-    buildDynamicProjectNetwork(projects);
+    authorizedProjects = Array.isArray(projects) ? projects : [];
+    if (authorizedProjects.length > 0) {
+      if (!selectedAuthorizedProject || !authorizedProjects.some(p => p.id === selectedAuthorizedProject!.id)) {
+        selectedAuthorizedProject = authorizedProjects[0];
+      }
+    }
+    updateProjectSelectorUI();
+    updateQuickChips();
+    buildDynamicProjectNetwork(authorizedProjects);
   },
   onTranscript: (speaker, text, isFinal) => {
+    if (speaker === 'user') {
+      // Backend echoes user speech for synchronization; update subtitle display only
+      displaySubtitle('user', text, false);
+      return;
+    }
     displaySubtitle(speaker, text, isFinal);
   },
   onAudioStream: (base64Audio) => {
@@ -1406,10 +1543,12 @@ window.addEventListener('click', (e) => {
   if (
     target.closest('#chat-panel') ||
     target.closest('.top-bar') ||
+    target.closest('#project-selector-container') ||
     target.closest('#history-drawer') ||
     target.closest('.subtitles-container') ||
     target.closest('#drag-overlay') ||
     target.closest('.quick-input-bar') ||
+    target.closest('.sphere-quick-chips') ||
     target.closest('.quick-chip')
   ) {
     return;
@@ -1497,6 +1636,22 @@ if (quickTextInput) {
     if (e.key === 'Enter') {
       e.preventDefault();
       submitUserTextQuery(quickTextInput.value);
+    }
+  });
+}
+
+// Authorized Project Dropdown Change
+if (projectSelectorDropdown) {
+  projectSelectorDropdown.addEventListener('click', (e) => e.stopPropagation());
+  projectSelectorDropdown.addEventListener('change', (e) => {
+    e.stopPropagation();
+    const chosenId = projectSelectorDropdown.value;
+    const found = authorizedProjects.find(p => p.id === chosenId);
+    if (found) {
+      selectedAuthorizedProject = found;
+      updateQuickChips();
+      setProjectHighlight(found.name, true);
+      console.log('🏢 Switched active authorized project to:', found.name, found.id);
     }
   });
 }

@@ -349,6 +349,71 @@
       color: #ffffff;
     }
 
+    /* Authorized Projects Selector */
+    .project-selector-container {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 12px;
+      background: rgba(216, 189, 92, 0.08);
+      border: 1px solid rgba(216, 189, 92, 0.35);
+      border-radius: 20px;
+      backdrop-filter: blur(10px);
+      transition: all 0.25s ease;
+      cursor: pointer;
+      pointer-events: auto;
+    }
+
+    .project-selector-container:hover {
+      border-color: #d8bd5c;
+      background: rgba(216, 189, 92, 0.15);
+      box-shadow: 0 0 12px rgba(216, 189, 92, 0.25);
+    }
+
+    .project-selector-icon {
+      font-size: 13px;
+    }
+
+    .project-selector-select {
+      background: transparent;
+      border: none;
+      color: #f1e4a1;
+      font-family: inherit;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      cursor: pointer;
+      outline: none;
+      padding: 2px 4px;
+    }
+
+    .project-selector-select option {
+      background: #0f1218;
+      color: #e2e8f0;
+      font-size: 12px;
+      padding: 6px 10px;
+    }
+
+    .chat-panel-project-tag {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      padding: 3px 8px;
+      border-radius: 12px;
+      background: rgba(216, 189, 92, 0.12);
+      border: 1px solid rgba(216, 189, 92, 0.3);
+      color: #d8bd5c;
+    }
+
+    .sphere-quick-chips {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 8px;
+      margin-bottom: 8px;
+      pointer-events: auto;
+    }
+
     /* Drag & Drop Overlay */
     #drag-overlay {
       position: fixed;
@@ -1144,7 +1209,7 @@
       }
     }
   </style>
-  <script type="module" crossorigin src="/assets/index-BlfFFDHL.js"></script>
+  <script type="module" crossorigin src="/assets/index-CO88-o-V.js"></script>
 </head>
 
 <body>
@@ -1161,6 +1226,14 @@
         <div class="status-dot"></div>
         <span id="status-text">SYSTEM DORMANT</span>
       </div>
+    </div>
+
+    <!-- Authorized Projects Selector -->
+    <div class="project-selector-container" id="project-selector-container" style="display: none;">
+      <span class="project-selector-icon">🏢</span>
+      <select id="project-selector-dropdown" class="project-selector-select" title="Active Authorized Project">
+        <option value="">Authorized Projects</option>
+      </select>
     </div>
 
     <!-- Active Ingested IOD Badge -->
@@ -1246,6 +1319,14 @@
       <div class="subtitle-text" id="subtitle-text">Click anywhere to activate neural speech session...</div>
     </div>
 
+    <!-- Sphere View Quick Chips -->
+    <div class="sphere-quick-chips" id="sphere-quick-chips">
+      <button class="quick-chip" id="sphere-chip-audit" data-query="Audit permissions for the active project and give me an overview">📋 Audit Permissions</button>
+      <button class="quick-chip" id="sphere-chip-iod" data-query="What is the overview of IOD?">📑 IOD Overview</button>
+      <button class="quick-chip" id="sphere-chip-cc" data-query="What is the overview of Commencement Certificate (CC)?">🏗️ CC Overview</button>
+      <button class="quick-chip" id="sphere-chip-followup" data-query="Draft a follow-up reminder for the CFO NOC to Rajesh Sharma">🚨 CFO Follow-Up</button>
+    </div>
+
     <!-- Quick Text Input Bar in Sphere View -->
     <div class="quick-input-bar" id="quick-input-bar">
       <input type="text" id="quick-text-input" placeholder="Type a message or question (e.g. Audit permissions)..." autocomplete="off" />
@@ -1264,7 +1345,7 @@
       <div class="chat-panel-title-group">
         <span class="chat-status-dot"></span>
         <span class="chat-panel-title">Hermes Intelligence Chat</span>
-        <span class="chat-panel-badge">MARKDOWN MODE</span>
+        <span class="chat-panel-project-tag" id="chat-project-tag" style="display: none;">🏢 Active Project</span>
       </div>
       <div class="chat-panel-actions">
         <button class="chat-action-btn" id="clear-chat-btn" title="Clear chat messages">Clear</button>
@@ -1279,11 +1360,11 @@
         <div class="chat-welcome-text">
           Type queries to audit permissions, inspect IOD & CC conditions, match missing municipal clearances, or draft WhatsApp follow-up reminders. Responses are rendered with full Markdown tables and badges.
         </div>
-        <div class="chat-quick-chips">
-          <button class="quick-chip" data-query="Audit permissions for Project 238 and give me an overview">📋 Audit Permissions</button>
-          <button class="quick-chip" data-query="What is the overview of IOD?">📑 IOD Overview</button>
-          <button class="quick-chip" data-query="What is the overview of Commencement Certificate (CC)?">🏗️ CC Overview</button>
-          <button class="quick-chip" data-query="Draft a follow-up reminder for the CFO NOC to Rajesh Sharma">🚨 CFO Follow-Up</button>
+        <div class="chat-quick-chips" id="chat-quick-chips-container">
+          <button class="quick-chip" id="chat-chip-audit" data-query="Audit permissions for the active project and give me an overview">📋 Audit Permissions</button>
+          <button class="quick-chip" id="chat-chip-iod" data-query="What is the overview of IOD?">📑 IOD Overview</button>
+          <button class="quick-chip" id="chat-chip-cc" data-query="What is the overview of Commencement Certificate (CC)?">🏗️ CC Overview</button>
+          <button class="quick-chip" id="chat-chip-followup" data-query="Draft a follow-up reminder for the CFO NOC to Rajesh Sharma">🚨 CFO Follow-Up</button>
         </div>
       </div>
     </div>

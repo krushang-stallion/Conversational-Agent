@@ -554,7 +554,15 @@ Mapped Projects: ${this.userProjects.map(p => p.name).join(', ') || 'Connected'}
       }));
 
       const activeProjectContext = this.userProjects.length > 0
-        ? `\nActive User Projects: ${this.userProjects.map(p => `Project Name: "${p.name}", ID: "${p.id}"`).join('; ')}`
+        ? `\n\n### 🏢 AUTHORIZED USER PROJECTS (STRICT ACCESS BOUNDARY)
+The developer is strictly authorized to access only the following registered projects:
+${this.userProjects.map(p => `• Project Name: "${p.name}", Project ID: "${p.id}"`).join('\n')}
+
+STRICT PROJECT SELECTION GOVERNANCE:
+1. When calling \`get_project_permissions(project_id="...")\` or any project tool, you MUST use one of the authorized Project IDs listed above.
+2. NEVER query, invent, or use any unauthorized project ID.
+3. If the user mentions one of their authorized projects by name (e.g. "${this.userProjects[0].name}"), map it to its exact authorized ID ("${this.userProjects[0].id}").
+4. If the user does not specify a project, default to their primary authorized project: "${this.userProjects[0].name}" (ID: ${this.userProjects[0].id}), and let the user know they can also audit their other projects (${this.userProjects.slice(1).map(p => p.name).join(', ') || 'N/A'}).`
         : '';
 
       const activeIodContext = this.activeIodSanction
@@ -706,9 +714,25 @@ When the user asks to follow up or draft a reminder:
             toolArgs.jwt_token = this.jwtToken;
           }
 
-          // If project_id is missing from args but user has active projects, default to first project
-          if (!toolArgs.project_id && this.userProjects.length > 0) {
-            toolArgs.project_id = this.userProjects[0].id;
+          // Validate & strictly enforce authorized project boundary
+          if (this.userProjects.length > 0) {
+            const authorizedIds = new Set(this.userProjects.map(p => String(p.id)));
+            const userPromptLower = userPrompt.toLowerCase();
+
+            // Check if user specifically requested an authorized project by name
+            const matchedProject = this.userProjects.find(p =>
+              userPromptLower.includes(p.name.toLowerCase()) ||
+              (toolArgs.project_name && p.name.toLowerCase().includes(String(toolArgs.project_name).toLowerCase()))
+            );
+
+            if (matchedProject) {
+              toolArgs.project_id = matchedProject.id;
+            } else if (!toolArgs.project_id || !authorizedIds.has(String(toolArgs.project_id))) {
+              if (toolArgs.project_id) {
+                console.warn(`⚠️ Overriding unauthorized project_id "${toolArgs.project_id}" with authorized project ID "${this.userProjects[0].id}" (${this.userProjects[0].name})`);
+              }
+              toolArgs.project_id = this.userProjects[0].id;
+            }
           }
 
           callbacks.onTranscript('agent', `⏳ [Step ${rounds + 1}/3] Querying ${toolName}...`, false);
@@ -730,7 +754,7 @@ When the user asks to follow up or draft a reminder:
                 callbacks.onTranscript('agent', '🔍 Analyzing existing clearance documents with gpt-4o-mini in parallel...', false);
                 const masterContext = await processClearancePdfsInBatches(
                   permsList,
-                  String(toolArgs.project_id || this.userProjects[0]?.id || '238'),
+                  String(toolArgs.project_id || this.userProjects[0]?.id || ''),
                   this.openaiClient,
                   this.jwtToken,
                   (msg) => callbacks.onTranscript('agent', msg, false),
@@ -739,7 +763,7 @@ When the user asks to follow up or draft a reminder:
 
                 toolResult = {
                   success: true,
-                  project_id: toolArgs.project_id || this.userProjects[0]?.id || '238',
+                  project_id: toolArgs.project_id || this.userProjects[0]?.id || '',
                   total_permissions: permsList.length,
                   unified_master_clearances: masterContext.clearances,
                   unprocessed_permissions: masterContext.unprocessed_permissions,
@@ -805,8 +829,8 @@ Please ensure your OpenAI API Key and MCP Server endpoint are set in Render Envi
    */
   private generateSimulatedInsight(userText: string): string {
     const lower = userText.toLowerCase();
-    const projectName = this.userProjects[0]?.name || 'Project 238';
-    const projectId = this.userProjects[0]?.id || '238';
+    const projectName = this.userProjects[0]?.name || 'Authorized Project';
+    const projectId = this.userProjects[0]?.id || '';
 
     if (lower.includes('follow') || lower.includes('remind') || lower.includes('whatsapp') || lower.includes('draft')) {
       return `### 🚨 Permission Follow-Up Draft (Human Approval Gate)

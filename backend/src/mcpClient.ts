@@ -501,8 +501,9 @@ export class MCPClientManager {
       // Auto-resolution fallback: if no direct URL was passed, lookup from project permissions
       if (!docUrl && (finalArgs.permission_name || finalArgs.permission_id || finalArgs.file_id)) {
         try {
-          const projectId = finalArgs.project_id || '238';
-          const permsResult: any = await this.executeTool('get_project_permissions', { project_id: projectId });
+          const projectId = finalArgs.project_id || '';
+          if (projectId) {
+            const permsResult: any = await this.executeTool('get_project_permissions', { project_id: projectId });
           const permsList = permsResult?.permissions || permsResult?.data?.permissions || (Array.isArray(permsResult) ? permsResult : []);
           
           const targetPerm = permsList.find((p: any) => {
@@ -511,10 +512,11 @@ export class MCPClientManager {
             return false;
           });
 
-          if (targetPerm?.ai_view_url) {
-            docUrl = targetPerm.ai_view_url;
-          } else if (targetPerm?.documents?.permission_plan?.[0]?.ai_view_url) {
-            docUrl = targetPerm.documents.permission_plan[0].ai_view_url;
+            if (targetPerm?.ai_view_url) {
+              docUrl = targetPerm.ai_view_url;
+            } else if (targetPerm?.documents?.permission_plan?.[0]?.ai_view_url) {
+              docUrl = targetPerm.documents.permission_plan[0].ai_view_url;
+            }
           }
         } catch (lookupErr) {
           console.warn('⚠️ Could not auto-resolve document URL from permissions:', lookupErr);
