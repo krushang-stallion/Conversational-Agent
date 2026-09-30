@@ -35,8 +35,9 @@ const muteBtnText = document.querySelector<HTMLElement>('#mute-btn-text')!;
 let isUserMuted = false;
 
 // --- CHAT & TEXT MODE DOM ELEMENTS ---
-const modeToggleBtn = document.querySelector<HTMLElement>('#mode-toggle-btn')!;
-const modeBtnText = document.querySelector<HTMLElement>('#mode-btn-text')!;
+const tabChatMode = document.querySelector<HTMLElement>('#tab-chat-mode');
+const tabVoiceMode = document.querySelector<HTMLElement>('#tab-voice-mode');
+const chatSwitchVoiceBtn = document.querySelector<HTMLElement>('#chat-switch-voice-btn');
 const chatPanel = document.querySelector<HTMLElement>('#chat-panel')!;
 const closeChatBtn = document.querySelector<HTMLElement>('#close-chat-btn')!;
 const clearChatBtn = document.querySelector<HTMLElement>('#clear-chat-btn')!;
@@ -955,7 +956,22 @@ function updateStatusUI(state: AIState) {
 
 function setMuteUI(muted: boolean) {
   isUserMuted = muted;
+  if (isChatOpen) {
+    // In chat mode, microphone is strictly stopped
+    audioRecorder.stop();
+    if (muteToggleBtn) {
+      muteToggleBtn.classList.add('muted');
+      micOnIcon.style.display = 'none';
+      micOffIcon.style.display = 'inline-block';
+      muteBtnText.innerText = 'MIC OFF';
+      muteToggleBtn.style.display = 'none';
+    }
+    return;
+  }
+
   audioRecorder.setMuted(muted);
+  if (muteToggleBtn) muteToggleBtn.style.display = 'flex';
+
   if (muted) {
     muteToggleBtn.classList.add('muted');
     micOnIcon.style.display = 'none';
@@ -979,6 +995,7 @@ function setMuteUI(muted: boolean) {
 
 muteToggleBtn.addEventListener('click', (e) => {
   e.stopPropagation();
+  if (isChatOpen) return;
   if (sphereState === 'compressed' || sphereState === 'compressing') return;
   setMuteUI(!isUserMuted);
 });
@@ -1006,9 +1023,15 @@ function stopAndClearAudioQueue() {
     currentNaturalAudio.pause();
     currentNaturalAudio = null;
   }
-  audioRecorder.setMuted(isUserMuted);
-  if (sphereState === 'expanded') {
-    updateStatusUI('listening');
+  // In chat mode, microphone MUST remain strictly stopped
+  if (isChatOpen) {
+    audioRecorder.stop();
+    updateStatusUI('idle');
+  } else {
+    audioRecorder.setMuted(isUserMuted);
+    if (sphereState === 'expanded') {
+      updateStatusUI(isUserMuted ? 'idle' : 'listening');
+    }
   }
 }
 
@@ -1034,11 +1057,17 @@ function playNextAudioInQueue() {
     isPlayingAudio = false;
     clearInterval(speechMeterInterval);
     updateVoiceMeter(0.0);
-    audioRecorder.setMuted(isUserMuted);
-    currentNaturalAudio = null;
-    if (sphereState === 'expanded') {
-      updateStatusUI('listening');
+    // In chat mode, NEVER unmute microphone when audio finishes!
+    if (isChatOpen) {
+      audioRecorder.stop();
+      updateStatusUI('idle');
+    } else {
+      audioRecorder.setMuted(isUserMuted);
+      if (sphereState === 'expanded' && !isUserMuted) {
+        updateStatusUI('listening');
+      }
     }
+    currentNaturalAudio = null;
     return;
   }
 
@@ -1141,35 +1170,102 @@ function appendTranscriptHistory(speaker: 'user' | 'agent', text: string) {
   drawerBody.scrollTop = drawerBody.scrollHeight;
 }
 
-// --- CHAT & TEXT MODE CONTROLLER ---
-function toggleChatMode(forceOpen?: boolean) {
-  isChatOpen = forceOpen !== undefined ? forceOpen : !isChatOpen;
+// --- DEDICATED SEPARATION: CHAT MODE VS VOICE MODE ---
+function startVoiceSession() {
   if (isChatOpen) {
-    document.body.classList.add('chat-mode-active');
-    chatPanel.classList.add('active');
-    if (modeBtnText) modeBtnText.innerText = 'SPHERE VIEW';
-    // In chat mode, mute microphone so background noise doesn't trigger voice turns while user types
-    setMuteUI(true);
-    audioRecorder.setMuted(true);
-    updateAuthBadge(Boolean(userJwtToken));
-    // Auto-focus text input in chat panel
-    setTimeout(() => {
-      if (chatTextInput) chatTextInput.focus();
-    }, 150);
-  } else {
-    document.body.classList.remove('chat-mode-active');
-    chatPanel.classList.remove('active');
-    if (modeBtnText) modeBtnText.innerText = 'CHAT MODE';
-
-    // If switching to sphere view and sphere is compressed, expand it
-    if (sphereState === 'compressed' || sphereState === 'compressing') {
-      wakeUpSession();
-    } else {
-      // In sphere view, unmute microphone for hands-free voice turns
-      setMuteUI(false);
-      audioRecorder.setMuted(false);
-    }
+    console.log('🔇 Chat mode active; voice input blocked.');
+    return;
   }
+
+  setMuteUI(false);
+  updateStatusUI('listening');
+
+  audioRecorder.start({
+    onSpeechStart: () => {
+      if (isChatOpen) return;
+      stopAndClearAudioQueue();
+      subtitleCard.classList.add('active');
+      speakerBadge.className = 'speaker-badge user';
+      speakerBadge.innerText = 'USER (LISTENING)';
+    },
+    onSpeechResult: (text, isFinal) => {
+      if (isChatOpen) return;
+      displaySubtitle('user', text, isFinal);
+      if (isFinal) {
+        audioRecorder.setMuted(true);
+        updateStatusUI('thinking');
+        showChatTypingIndicator();
+        // Record in shared chat feed & history so both modes retain common context
+        appendChatMessage('user', text);
+        appendTranscriptHistory('user', text);
+        wsClient.sendUserSpeech(text);
+      }
+    },
+    onAudioLevel: (level) => {
+      if (!isChatOpen) {
+        updateVoiceMeter(level);
+      }
+    },
+    onError: (err) => {
+      console.warn('Microphone error in voice session:', err);
+    }
+  });
+}
+
+function stopVoiceSession() {
+  audioRecorder.stop();
+  updateVoiceMeter(0.0);
+  if (subtitleCard) subtitleCard.classList.remove('active');
+}
+
+function switchToChatMode() {
+  isChatOpen = true;
+  document.body.classList.add('chat-mode-active');
+  chatPanel.classList.add('active');
+
+  // Mode Tab highlight
+  if (tabChatMode) tabChatMode.classList.add('active');
+  if (tabVoiceMode) tabVoiceMode.classList.remove('active');
+
+  // In chat mode, hide mic button in top bar and completely stop microphone hardware
+  stopVoiceSession();
+  setMuteUI(true);
+  updateStatusUI('idle');
+  updateAuthBadge(Boolean(userJwtToken));
+
+  // Collapse 3D sphere if it was open
+  if (sphereState === 'expanded' || sphereState === 'expanding') {
+    collapseSphere();
+  }
+
+  // Focus textarea in chat panel
+  setTimeout(() => {
+    if (chatTextInput) chatTextInput.focus();
+  }, 150);
+}
+
+function switchToVoiceMode() {
+  isChatOpen = false;
+  document.body.classList.remove('chat-mode-active');
+  chatPanel.classList.remove('active');
+
+  // Mode Tab highlight
+  if (tabChatMode) tabChatMode.classList.remove('active');
+  if (tabVoiceMode) tabVoiceMode.classList.add('active');
+
+  // Show mute button in voice mode
+  if (muteToggleBtn) muteToggleBtn.style.display = 'flex';
+
+  // Expand sphere if dormant
+  if (sphereState === 'compressed' || sphereState === 'compressing') {
+    wakeUpSphere();
+  }
+
+  // Ensure backend session is active with token
+  wsClient.startSession(userJwtToken);
+
+  // Activate microphone session for hands-free voice interaction
+  startVoiceSession();
 }
 
 function formatMessageTime(): string {
@@ -1243,9 +1339,9 @@ function submitUserTextQuery(text: string) {
   const clean = (text || '').trim();
   if (!clean) return;
 
-  // Auto wake up session if currently dormant
-  if (sphereState === 'compressed' || sphereState === 'compressing') {
-    wakeUpSession();
+  // Auto wake up sphere only if in Voice Mode and currently dormant
+  if (!isChatOpen && (sphereState === 'compressed' || sphereState === 'compressing')) {
+    wakeUpSphere();
   }
 
   // Detect if user pasted a JWT authentication token directly into chat input
@@ -1270,8 +1366,12 @@ function submitUserTextQuery(text: string) {
   // Display in subtitle card without re-appending
   displaySubtitle('user', clean, false);
 
-  // Mute microphone while thinking so user typing / room noise doesn't trigger speech turns
-  audioRecorder.setMuted(true);
+  // In chat mode, microphone MUST remain strictly stopped; in voice mode, mute during LLM turn
+  if (isChatOpen) {
+    audioRecorder.stop();
+  } else {
+    audioRecorder.setMuted(true);
+  }
   updateStatusUI('thinking');
 
   // Clear text inputs
@@ -1569,7 +1669,7 @@ function updateAuthBadge(isAuthenticated: boolean) {
   }
 }
 
-function wakeUpSession() {
+function wakeUpSphere() {
   if (sphereState === 'expanded' || sphereState === 'expanding') return;
 
   sphereState = 'expanding';
@@ -1580,38 +1680,26 @@ function wakeUpSession() {
   backgroundDust.visible = true;
   sphereShells.forEach((shell) => (shell.visible = true));
   if (startLabel) startLabel.classList.add('hidden');
+}
 
-  // In chat mode, default microphone to muted so typing isn't interrupted by noise
-  if (isChatOpen) {
-    setMuteUI(true);
-    audioRecorder.setMuted(true);
+function collapseSphere() {
+  stopAndClearAudioQueue();
+  stopVoiceSession();
+  updateStatusUI('idle');
+  subtitleCard.classList.remove('active');
+  setProjectHighlight(null, false);
+  setMuteUI(false);
+
+  if (nodesState === 'expanded' || nodesState === 'expanding') {
+    // Phase 1: Collapse peripheral nodes first while holding concentric spheres open
+    nodesState = 'compressing';
+    labelContainer.style.opacity = '0';
   } else {
-    setMuteUI(false);
+    // If nodes were not open, directly collapse spheres
+    sphereState = 'compressing';
+    nodesState = 'hidden';
+    labelContainer.style.display = 'none';
   }
-  updateAuthBadge(Boolean(userJwtToken));
-  wsClient.startSession(userJwtToken);
-
-  // Open VAD Microphone Session
-  audioRecorder.start({
-    onSpeechStart: () => {
-      stopAndClearAudioQueue();
-      subtitleCard.classList.add('active');
-      speakerBadge.className = 'speaker-badge user';
-      speakerBadge.innerText = 'USER (LISTENING)';
-    },
-    onSpeechResult: (text, isFinal) => {
-      displaySubtitle('user', text, isFinal);
-      if (isFinal) {
-        audioRecorder.setMuted(true);
-        updateStatusUI('thinking');
-        showChatTypingIndicator();
-        wsClient.sendUserSpeech(text);
-      }
-    },
-    onAudioLevel: (level) => {
-      updateVoiceMeter(level);
-    }
-  });
 }
 
 // Wake-up Screen Click Handlers
@@ -1633,42 +1721,39 @@ window.addEventListener('click', (e) => {
   }
 
   if (sphereState === 'compressed' || sphereState === 'compressing') {
-    wakeUpSession();
+    wakeUpSphere();
+    startVoiceSession();
   } else if (sphereState === 'expanded' || sphereState === 'expanding') {
-    // CLICK #2: STAGED TWO-PHASE COLLAPSE & END SESSION
-    stopAndClearAudioQueue();
-    audioRecorder.stop();
-    wsClient.endSession();
-    updateStatusUI('idle');
-    subtitleCard.classList.remove('active');
-    setProjectHighlight(null, false);
-    setMuteUI(false);
-
-    if (nodesState === 'expanded' || nodesState === 'expanding') {
-      // Phase 1: Collapse peripheral nodes first while holding concentric spheres open
-      nodesState = 'compressing';
-      labelContainer.style.opacity = '0';
-    } else {
-      // If nodes were not open, directly collapse spheres
-      sphereState = 'compressing';
-      nodesState = 'hidden';
-      labelContainer.style.display = 'none';
-    }
+    collapseSphere();
   }
 });
 
 // --- CHAT & TEXT MODE EVENT LISTENERS ---
-if (modeToggleBtn) {
-  modeToggleBtn.addEventListener('click', (e) => {
+if (tabChatMode) {
+  tabChatMode.addEventListener('click', (e) => {
     e.stopPropagation();
-    toggleChatMode();
+    switchToChatMode();
+  });
+}
+
+if (tabVoiceMode) {
+  tabVoiceMode.addEventListener('click', (e) => {
+    e.stopPropagation();
+    switchToVoiceMode();
+  });
+}
+
+if (chatSwitchVoiceBtn) {
+  chatSwitchVoiceBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    switchToVoiceMode();
   });
 }
 
 if (closeChatBtn) {
   closeChatBtn.addEventListener('click', (e) => {
     e.stopPropagation();
-    toggleChatMode(false);
+    switchToVoiceMode();
   });
 }
 
@@ -1872,9 +1957,11 @@ function animate() {
 }
 animate();
 
-// Auto-open in Chat Mode by default on page landing
-toggleChatMode(true);
-wakeUpSession();
+// Auto-open in Chat Mode by default on page landing with microphone strictly disabled
+switchToChatMode();
+if (userJwtToken) {
+  wsClient.startSession(userJwtToken);
+}
 
 window.addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight;

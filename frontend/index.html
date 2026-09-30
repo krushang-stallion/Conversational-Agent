@@ -320,6 +320,58 @@
       box-shadow: 0 0 20px rgba(255, 77, 77, 0.5);
     }
 
+    /* Mode Switcher Segmented Control */
+    .mode-segmented-control {
+      display: inline-flex;
+      align-items: center;
+      background: rgba(14, 18, 12, 0.88);
+      border: 1px solid rgba(216, 189, 92, 0.32);
+      border-radius: 24px;
+      padding: 3px;
+      gap: 4px;
+      backdrop-filter: blur(12px);
+      box-shadow: 0 4px 18px rgba(0, 0, 0, 0.5);
+      pointer-events: auto;
+    }
+
+    .mode-tab-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      background: transparent;
+      border: 1px solid transparent;
+      color: #94a3b8;
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 600;
+      font-family: inherit;
+      letter-spacing: 0.8px;
+      cursor: pointer;
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .mode-tab-btn:hover {
+      color: var(--gold-bright);
+      background: rgba(216, 189, 92, 0.08);
+    }
+
+    .mode-tab-btn.active {
+      background: rgba(216, 189, 92, 0.22);
+      border-color: rgba(216, 189, 92, 0.5);
+      color: var(--gold-bright);
+      box-shadow: 0 0 15px rgba(216, 189, 92, 0.25), inset 0 0 10px rgba(216, 189, 92, 0.15);
+      text-shadow: 0 0 8px rgba(255, 243, 161, 0.6);
+    }
+
+    .mode-tab-btn#tab-voice-mode.active {
+      background: rgba(16, 38, 22, 0.88);
+      border-color: rgba(56, 239, 125, 0.5);
+      color: #86efac;
+      box-shadow: 0 0 15px rgba(56, 239, 125, 0.3), inset 0 0 10px rgba(56, 239, 125, 0.15);
+      text-shadow: 0 0 8px rgba(56, 239, 125, 0.6);
+    }
+
     /* Active IOD Document Pill */
     .active-iod-pill {
       display: inline-flex;
@@ -1340,42 +1392,45 @@
       <button class="iod-remove-btn" id="iod-remove-btn" title="Remove IOD document">&times;</button>
     </div>
 
-    <div class="top-actions">
-      <button class="icon-btn" id="mute-toggle-btn" title="Mute / Unmute Microphone">
-        <svg id="mic-on-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-          stroke-width="2">
-          <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
-          <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-          <line x1="12" x2="12" y1="19" y2="22" />
-        </svg>
-        <svg id="mic-off-icon" style="display: none;" width="14" height="14" viewBox="0 0 24 24" fill="none"
-          stroke="currentColor" stroke-width="2">
-          <line x1="2" x2="22" y1="2" y2="22" />
-          <path d="M18.89 13.23A7.12 7.12 0 0 0 19 12v-2" />
-          <path d="M5 10v2a7 7 0 0 0 12 5" />
-          <path d="M15 9.34V5a3 3 0 0 0-5.68-1.33" />
-          <path d="M9 9v3a3 3 0 0 0 5.12 2.12" />
-          <line x1="12" x2="12" y1="19" y2="22" />
-        </svg>
-        <span id="mute-btn-text">MUTE</span>
-      </button>
+      <!-- Mode Switcher Segmented Control -->
+      <div class="mode-segmented-control" id="mode-segmented-control">
+        <button class="mode-tab-btn active" id="tab-chat-mode" title="Text Chat Mode - Keyboard & Markdown (Microphone strictly OFF)">
+          <span class="mode-icon">💬</span>
+          <span class="mode-label">CHAT MODE</span>
+        </button>
+        <button class="mode-tab-btn" id="tab-voice-mode" title="Neural Voice Mode - Hands-free 3D Sphere & Voice Input">
+          <span class="mode-icon">🎙️</span>
+          <span class="mode-label">VOICE MODE</span>
+        </button>
+      </div>
 
-      <button class="icon-btn" id="mode-toggle-btn" title="Toggle 3D Sphere & Chat Mode">
-        <svg id="chat-mode-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none"/>
-          <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
-          <path d="M2 12h20"/>
-        </svg>
-        <span id="mode-btn-text">SPHERE VIEW</span>
-      </button>
+      <div class="top-actions">
+        <button class="icon-btn" id="mute-toggle-btn" title="Mute / Unmute Microphone" style="display: none;">
+          <svg id="mic-on-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2">
+            <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+            <line x1="12" x2="12" y1="19" y2="22" />
+          </svg>
+          <svg id="mic-off-icon" style="display: none;" width="14" height="14" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" stroke-width="2">
+            <line x1="2" x2="22" y1="2" y2="22" />
+            <path d="M18.89 13.23A7.12 7.12 0 0 0 19 12v-2" />
+            <path d="M5 10v2a7 7 0 0 0 12 5" />
+            <path d="M15 9.34V5a3 3 0 0 0-5.68-1.33" />
+            <path d="M9 9v3a3 3 0 0 0 5.12 2.12" />
+            <line x1="12" x2="12" y1="19" y2="22" />
+          </svg>
+          <span id="mute-btn-text">MUTE</span>
+        </button>
 
-      <button class="icon-btn" id="history-toggle-btn">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-        </svg>
-        <span>LOGS</span>
-      </button>
-    </div>
+        <button class="icon-btn" id="history-toggle-btn" title="View Session Interaction History">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+          </svg>
+          <span>LOGS</span>
+        </button>
+      </div>
   </div>
 
   <!-- Drag & Drop Overlay -->
@@ -1437,8 +1492,9 @@
         <span class="chat-panel-project-tag" id="chat-project-tag" style="display: none;">🏢 Active Project</span>
       </div>
       <div class="chat-panel-actions">
+        <button class="chat-action-btn" id="chat-switch-voice-btn" title="Switch to Neural 3D Voice Sphere Mode">🎙️ Voice Mode</button>
         <button class="chat-action-btn" id="clear-chat-btn" title="Clear chat messages">Clear</button>
-        <button class="chat-action-btn" id="close-chat-btn" title="Switch to 3D Sphere View">&times;</button>
+        <button class="chat-action-btn" id="close-chat-btn" title="Switch to 3D Sphere Voice View">&times;</button>
       </div>
     </div>
 
@@ -1472,7 +1528,7 @@
         </button>
       </div>
       <div class="chat-input-footer">
-        <span>Connected to Stallion MCP Server • Parallel clearance extraction</span>
+        <span id="chat-mode-status">🟢 Chat Mode Active • Mic strictly off • Shared session context</span>
         <span id="chat-audio-hint">Voice playback active</span>
       </div>
     </div>
