@@ -1122,10 +1122,20 @@ function appendTranscriptHistory(speaker: 'user' | 'agent', text: string) {
   if (emptyNote) emptyNote.remove();
 
   const entry = document.createElement('div');
-  entry.className = 'history-entry';
+  entry.className = `history-entry ${speaker}`;
+  const roleName = speaker === 'user' ? 'USER' : 'HERMES SPECIALIST';
+  const timeStr = formatMessageTime();
+
+  const contentHtml = speaker === 'user'
+    ? `<div class="history-content user">${clean.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br/>')}</div>`
+    : `<div class="history-content agent">${renderMarkdown(clean)}</div>`;
+
   entry.innerHTML = `
-    <div class="history-role ${speaker}">${speaker === 'user' ? 'User' : 'Neural Core'}</div>
-    <div class="history-content">${clean}</div>
+    <div class="history-header">
+      <div class="history-role ${speaker}">${roleName}</div>
+      <div class="history-time">${timeStr}</div>
+    </div>
+    ${contentHtml}
   `;
   drawerBody.appendChild(entry);
   drawerBody.scrollTop = drawerBody.scrollHeight;
