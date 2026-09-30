@@ -6,6 +6,7 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 import { CSS2DObject, CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
 import { AgentWSClient, AIState, ProjectData } from './wsClient.js';
 import { AudioRecorder } from './audioRecorder.js';
+import { renderMarkdown } from './markdownRenderer.js';
 
 // --- COLOR PALETTE & CONFIGURATION ---
 const GOLD = new THREE.Color('#d9b84e');
@@ -32,6 +33,24 @@ const micOnIcon = document.querySelector<HTMLElement>('#mic-on-icon')!;
 const micOffIcon = document.querySelector<HTMLElement>('#mic-off-icon')!;
 const muteBtnText = document.querySelector<HTMLElement>('#mute-btn-text')!;
 let isUserMuted = false;
+
+// --- CHAT & TEXT MODE DOM ELEMENTS ---
+const modeToggleBtn = document.querySelector<HTMLElement>('#mode-toggle-btn')!;
+const modeBtnText = document.querySelector<HTMLElement>('#mode-btn-text')!;
+const chatPanel = document.querySelector<HTMLElement>('#chat-panel')!;
+const closeChatBtn = document.querySelector<HTMLElement>('#close-chat-btn')!;
+const clearChatBtn = document.querySelector<HTMLElement>('#clear-chat-btn')!;
+const chatFeed = document.querySelector<HTMLElement>('#chat-feed')!;
+const chatWelcomeCard = document.querySelector<HTMLElement>('#chat-welcome-card');
+const chatTextInput = document.querySelector<HTMLTextAreaElement>('#chat-text-input')!;
+const chatSendBtn = document.querySelector<HTMLElement>('#chat-send-btn')!;
+const chatVoiceToggleBtn = document.querySelector<HTMLElement>('#chat-voice-toggle-btn')!;
+const chatVoiceIcon = document.querySelector<HTMLElement>('#chat-voice-icon')!;
+const chatAudioHint = document.querySelector<HTMLElement>('#chat-audio-hint')!;
+const quickTextInput = document.querySelector<HTMLInputElement>('#quick-text-input')!;
+const quickSendBtn = document.querySelector<HTMLElement>('#quick-send-btn')!;
+let isChatOpen = false;
+let isVoicePlaybackEnabled = true;
 
 // --- IOD UPLOAD & DOCUMENT DOM ELEMENTS ---
 const uploadIodBtn = document.querySelector<HTMLElement>('#upload-iod-btn');
@@ -981,6 +1000,11 @@ function stopAndClearAudioQueue() {
 }
 
 function playNaturalAudio(base64Audio: string) {
+  // If voice playback is muted/disabled in chat mode, do not play audio
+  if (!isVoicePlaybackEnabled) {
+    return;
+  }
+
   // Ensure default browser speech synthesis is permanently silenced
   if ('speechSynthesis' in window) {
     window.speechSynthesis.cancel();
@@ -1063,6 +1087,8 @@ function displaySubtitle(speaker: 'user' | 'agent', text: string, isFinal: boole
 
   if (isFinal) {
     appendTranscriptHistory(speaker, text);
+    removeChatTypingIndicator();
+    appendChatMessage(speaker, text);
   }
 }
 
@@ -1078,6 +1104,128 @@ function appendTranscriptHistory(speaker: 'user' | 'agent', text: string) {
   `;
   drawerBody.appendChild(entry);
   drawerBody.scrollTop = drawerBody.scrollHeight;
+}
+
+// --- CHAT & TEXT MODE CONTROLLER ---
+function toggleChatMode(forceOpen?: boolean) {
+  isChatOpen = forceOpen !== undefined ? forceOpen : !isChatOpen;
+  if (isChatOpen) {
+    chatPanel.classList.add('active');
+    modeBtnText.innerText = 'SPHERE VIEW';
+    // Auto-focus text input in chat panel
+    setTimeout(() => {
+      if (chatTextInput) chatTextInput.focus();
+    }, 150);
+  } else {
+    chatPanel.classList.remove('active');
+    modeBtnText.innerText = 'CHAT MODE';
+  }
+}
+
+function formatMessageTime(): string {
+  const d = new Date();
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function showChatTypingIndicator() {
+  removeChatTypingIndicator();
+  const typingEl = document.createElement('div');
+  typingEl.className = 'chat-typing';
+  typingEl.id = 'chat-typing-indicator';
+  typingEl.innerHTML = `
+    <div class="typing-dot"></div>
+    <div class="typing-dot"></div>
+    <div class="typing-dot"></div>
+    <span>Hermes is analyzing Stallion regulatory records...</span>
+  `;
+  chatFeed.appendChild(typingEl);
+  chatFeed.scrollTop = chatFeed.scrollHeight;
+}
+
+function removeChatTypingIndicator() {
+  const typingEl = document.querySelector('#chat-typing-indicator');
+  if (typingEl) typingEl.remove();
+}
+
+function appendChatMessage(speaker: 'user' | 'agent', text: string) {
+  if (!text || !text.trim()) return;
+
+  // Remove the initial welcome card once real conversation starts
+  if (chatWelcomeCard && chatFeed.contains(chatWelcomeCard)) {
+    chatWelcomeCard.remove();
+  }
+
+  const msgEl = document.createElement('div');
+  msgEl.className = `chat-msg ${speaker}`;
+
+  const timeStr = formatMessageTime();
+  const senderName = speaker === 'user' ? 'YOU' : 'HERMES SPECIALIST';
+
+  const contentHtml = speaker === 'user'
+    ? `<div class="chat-msg-content">${text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br/>')}</div>`
+    : `<div class="chat-msg-content">${renderMarkdown(text)}</div>`;
+
+  msgEl.innerHTML = `
+    <div class="chat-msg-header">
+      <span class="chat-msg-sender">${senderName}</span>
+      <span class="chat-msg-time">${timeStr}</span>
+    </div>
+    ${contentHtml}
+  `;
+
+  chatFeed.appendChild(msgEl);
+  chatFeed.scrollTop = chatFeed.scrollHeight;
+}
+
+function submitUserTextQuery(text: string) {
+  const clean = (text || '').trim();
+  if (!clean) return;
+
+  // Auto wake up session if currently dormant
+  if (sphereState === 'compressed' || sphereState === 'compressing') {
+    wakeUpSession();
+  }
+
+  // Display user message in chat
+  appendChatMessage('user', clean);
+
+  // Show typing animation in chat feed
+  showChatTypingIndicator();
+
+  // Display in subtitle card
+  displaySubtitle('user', clean, true);
+
+  // Mute microphone while thinking so user typing / room noise doesn't trigger speech turns
+  audioRecorder.setMuted(true);
+  updateStatusUI('thinking');
+
+  // Clear text inputs
+  if (chatTextInput) {
+    chatTextInput.value = '';
+    chatTextInput.style.height = '42px';
+  }
+  if (quickTextInput) quickTextInput.value = '';
+
+  // Dispatch query to backend over WebSocket
+  wsClient.sendUserSpeech(clean);
+}
+
+function clearChatFeed() {
+  chatFeed.innerHTML = `
+    <div class="chat-welcome-card" id="chat-welcome-card">
+      <div class="chat-welcome-icon">⚡</div>
+      <div class="chat-welcome-title">Stallion Regulatory & Permission Intelligence</div>
+      <div class="chat-welcome-text">
+        Chat history cleared. Type queries to audit permissions, inspect IOD & CC conditions, or draft WhatsApp follow-up reminders. Responses are rendered with full Markdown tables and badges.
+      </div>
+      <div class="chat-quick-chips">
+        <button class="quick-chip" data-query="Audit permissions for Project 238 and give me an overview">📋 Audit Permissions</button>
+        <button class="quick-chip" data-query="What is the overview of IOD?">📑 IOD Overview</button>
+        <button class="quick-chip" data-query="What is the overview of Commencement Certificate (CC)?">🏗️ CC Overview</button>
+        <button class="quick-chip" data-query="Draft a follow-up reminder for the CFO NOC to Rajesh Sharma">🚨 CFO Follow-Up</button>
+      </div>
+    </div>
+  `;
 }
 
 // WebSocket Event Listeners
@@ -1213,44 +1361,62 @@ historyDrawer.addEventListener('click', (e) => {
 const urlParams = new URLSearchParams(window.location.search);
 const userJwtToken = urlParams.get('token') || urlParams.get('jwt') || urlParams.get('bearer') || '';
 
-// Wake-up Screen Click Handlers
-window.addEventListener('click', () => {
-  if (sphereState === 'compressed' || sphereState === 'compressing') {
-    // CLICK #1: WAKE UP NEURAL SYSTEM (Stage 1 Expansion - Concentric Spheres Bloom)
-    sphereState = 'expanding';
-    nodesGroup.visible = false;
-    labelContainer.style.display = 'none';
-    labelContainer.style.opacity = '1';
-    nodesState = 'hidden';
-    backgroundDust.visible = true;
-    sphereShells.forEach((shell) => (shell.visible = true));
-    if (startLabel) startLabel.classList.add('hidden');
+function wakeUpSession() {
+  if (sphereState === 'expanded' || sphereState === 'expanding') return;
 
-    // On wake up, microphone is unmuted by default
-    setMuteUI(false);
-    wsClient.startSession(userJwtToken);
+  sphereState = 'expanding';
+  nodesGroup.visible = false;
+  labelContainer.style.display = 'none';
+  labelContainer.style.opacity = '1';
+  nodesState = 'hidden';
+  backgroundDust.visible = true;
+  sphereShells.forEach((shell) => (shell.visible = true));
+  if (startLabel) startLabel.classList.add('hidden');
 
-    // Open VAD Microphone Session
-    audioRecorder.start({
-      onSpeechStart: () => {
-        stopAndClearAudioQueue();
-        subtitleCard.classList.add('active');
-        speakerBadge.className = 'speaker-badge user';
-        speakerBadge.innerText = 'USER (LISTENING)';
-      },
-      onSpeechResult: (text, isFinal) => {
-        displaySubtitle('user', text, isFinal);
-        if (isFinal) {
-          // Immediately mute microphone and enter thinking state so ambient sound doesn't trigger spurious turns
-          audioRecorder.setMuted(true);
-          updateStatusUI('thinking');
-          wsClient.sendUserSpeech(text);
-        }
-      },
-      onAudioLevel: (level) => {
-        updateVoiceMeter(level);
+  // On wake up, microphone is unmuted by default
+  setMuteUI(false);
+  wsClient.startSession(userJwtToken);
+
+  // Open VAD Microphone Session
+  audioRecorder.start({
+    onSpeechStart: () => {
+      stopAndClearAudioQueue();
+      subtitleCard.classList.add('active');
+      speakerBadge.className = 'speaker-badge user';
+      speakerBadge.innerText = 'USER (LISTENING)';
+    },
+    onSpeechResult: (text, isFinal) => {
+      displaySubtitle('user', text, isFinal);
+      if (isFinal) {
+        audioRecorder.setMuted(true);
+        updateStatusUI('thinking');
+        showChatTypingIndicator();
+        wsClient.sendUserSpeech(text);
       }
-    });
+    },
+    onAudioLevel: (level) => {
+      updateVoiceMeter(level);
+    }
+  });
+}
+
+// Wake-up Screen Click Handlers
+window.addEventListener('click', (e) => {
+  const target = e.target as HTMLElement;
+  if (
+    target.closest('#chat-panel') ||
+    target.closest('.top-bar') ||
+    target.closest('#history-drawer') ||
+    target.closest('.subtitles-container') ||
+    target.closest('#drag-overlay') ||
+    target.closest('.quick-input-bar') ||
+    target.closest('.quick-chip')
+  ) {
+    return;
+  }
+
+  if (sphereState === 'compressed' || sphereState === 'compressing') {
+    wakeUpSession();
   } else if (sphereState === 'expanded' || sphereState === 'expanding') {
     // CLICK #2: STAGED TWO-PHASE COLLAPSE & END SESSION
     stopAndClearAudioQueue();
@@ -1273,6 +1439,96 @@ window.addEventListener('click', () => {
     }
   }
 });
+
+// --- CHAT & TEXT MODE EVENT LISTENERS ---
+if (modeToggleBtn) {
+  modeToggleBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleChatMode();
+  });
+}
+
+if (closeChatBtn) {
+  closeChatBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleChatMode(false);
+  });
+}
+
+if (clearChatBtn) {
+  clearChatBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    clearChatFeed();
+  });
+}
+
+if (chatSendBtn) {
+  chatSendBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    submitUserTextQuery(chatTextInput.value);
+  });
+}
+
+if (chatTextInput) {
+  chatTextInput.addEventListener('click', (e) => e.stopPropagation());
+  chatTextInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      submitUserTextQuery(chatTextInput.value);
+    }
+  });
+
+  chatTextInput.addEventListener('input', () => {
+    chatTextInput.style.height = 'auto';
+    chatTextInput.style.height = Math.min(chatTextInput.scrollHeight, 120) + 'px';
+  });
+}
+
+if (quickSendBtn) {
+  quickSendBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    submitUserTextQuery(quickTextInput.value);
+  });
+}
+
+if (quickTextInput) {
+  quickTextInput.addEventListener('click', (e) => e.stopPropagation());
+  quickTextInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      submitUserTextQuery(quickTextInput.value);
+    }
+  });
+}
+
+// Quick Suggestion Chips Click
+document.addEventListener('click', (e) => {
+  const target = e.target as HTMLElement;
+  const chip = target.closest('.quick-chip') as HTMLElement;
+  if (chip) {
+    e.stopPropagation();
+    const query = chip.dataset.query || chip.innerText.replace(/^[^\w\s]+\s*/, '');
+    submitUserTextQuery(query);
+  }
+});
+
+// Chat Voice Audio Output Toggle
+if (chatVoiceToggleBtn) {
+  chatVoiceToggleBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    isVoicePlaybackEnabled = !isVoicePlaybackEnabled;
+    if (isVoicePlaybackEnabled) {
+      chatVoiceToggleBtn.classList.remove('muted');
+      if (chatVoiceIcon) chatVoiceIcon.innerText = '🔊';
+      if (chatAudioHint) chatAudioHint.innerText = 'Voice playback active';
+    } else {
+      chatVoiceToggleBtn.classList.add('muted');
+      if (chatVoiceIcon) chatVoiceIcon.innerText = '🔇';
+      if (chatAudioHint) chatAudioHint.innerText = 'Voice muted (silent chat mode)';
+      stopAndClearAudioQueue();
+    }
+  });
+}
 
 // --- RENDER & ANIMATION LOOP ---
 const clock = new THREE.Clock();
