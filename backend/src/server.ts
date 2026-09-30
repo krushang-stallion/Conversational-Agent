@@ -124,6 +124,9 @@ wss.on('connection', (ws: WebSocket) => {
     }
   };
 
+  let connectionActiveToken: string | null = null;
+  let connectionSessionStarted = false;
+
   ws.on('message', async (data: Buffer | string) => {
     try {
       const message = JSON.parse(data.toString());
@@ -133,12 +136,20 @@ wss.on('connection', (ws: WebSocket) => {
           const token = (message.token && typeof message.token === 'string' && message.token.trim())
             ? message.token.trim()
             : getStoredTokenFallback();
+          if (connectionSessionStarted && connectionActiveToken === token) {
+            console.log('🛡️ Ignored duplicate SESSION_START on active connection with identical token');
+            break;
+          }
+          connectionSessionStarted = true;
+          connectionActiveToken = token;
           console.log('🚀 Session started with token:', token ? '[TOKEN_PROVIDED]' : '[NO_TOKEN]');
           await agent.startSessionWithToken(token, callbacks);
           break;
 
         case 'SESSION_END':
           console.log('🛑 Session ended by user click');
+          connectionSessionStarted = false;
+          connectionActiveToken = null;
           agent.resetSession();
           sendEvent({ type: 'STATE_CHANGE', state: 'idle' });
           break;

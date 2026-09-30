@@ -27,6 +27,8 @@ export class AgentWSClient {
   private isExplicitlyClosed = false;
   private pendingQueue: any[] = [];
   private activeToken: string = '';
+  private sessionStarted = false;
+  private lastSessionToken: string | null = null;
 
   constructor(url?: string) {
     if (url) {
@@ -79,6 +81,7 @@ export class AgentWSClient {
       };
 
       this.ws.onclose = () => {
+        this.sessionStarted = false;
         if (this.callbacks.onConnectionChange) {
           this.callbacks.onConnectionChange(false);
         }
@@ -164,11 +167,17 @@ export class AgentWSClient {
     this.send({ type: 'CLEAR_IOD_PDF' });
   }
 
-  public startSession(token?: string): void {
+  public startSession(token?: string, force = false): void {
     if (token && token.trim()) {
       this.activeToken = token.trim();
     }
     const tokenToSend = this.activeToken || (token && token.trim()) || '';
+    if (this.sessionStarted && this.lastSessionToken === tokenToSend && !force) {
+      console.log('🛡️ SESSION_START suppressed: session already active with identical token');
+      return;
+    }
+    this.sessionStarted = true;
+    this.lastSessionToken = tokenToSend;
     this.send({ type: 'SESSION_START', token: tokenToSend });
   }
 
@@ -181,6 +190,8 @@ export class AgentWSClient {
   }
 
   public endSession(): void {
+    this.sessionStarted = false;
+    this.lastSessionToken = null;
     this.send({ type: 'SESSION_END' });
   }
 

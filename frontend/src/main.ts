@@ -60,11 +60,17 @@ const chatProjectTag = document.querySelector<HTMLElement>('#chat-project-tag');
 let authorizedProjects: ProjectData[] = [];
 let selectedAuthorizedProject: ProjectData | null = null;
 
-// Speech and text deduplication state to prevent triplicate chat bubble rendering
+// Speech and text deduplication state to prevent duplicate chat bubble rendering
 let lastUserChatMessage = '';
 let lastUserChatTime = 0;
 let lastUserTranscript = '';
 let lastUserTranscriptTime = 0;
+let lastAgentChatMessage = '';
+let lastAgentChatTime = 0;
+let lastAgentTranscript = '';
+let lastAgentTranscriptTime = 0;
+let lastAudioBase64Snippet = '';
+let lastAudioBase64Time = 0;
 
 // --- IOD UPLOAD & DOCUMENT DOM ELEMENTS ---
 const uploadIodBtn = document.querySelector<HTMLElement>('#upload-iod-btn');
@@ -1041,6 +1047,16 @@ function playNaturalAudio(base64Audio: string) {
     return;
   }
 
+  // Deduplicate identical audio buffers dispatched within 4 seconds (e.g. duplicate greeting)
+  const snippet = base64Audio.slice(0, 100);
+  const now = Date.now();
+  if (snippet === lastAudioBase64Snippet && (now - lastAudioBase64Time) < 4000) {
+    console.log('🛡️ Suppressed duplicate audio stream chunk');
+    return;
+  }
+  lastAudioBase64Snippet = snippet;
+  lastAudioBase64Time = now;
+
   // Ensure default browser speech synthesis is permanently silenced
   if ('speechSynthesis' in window) {
     window.speechSynthesis.cancel();
@@ -1145,6 +1161,14 @@ function appendTranscriptHistory(speaker: 'user' | 'agent', text: string) {
     }
     lastUserTranscript = clean;
     lastUserTranscriptTime = now;
+  } else if (speaker === 'agent') {
+    const now = Date.now();
+    if (clean.toLowerCase() === lastAgentTranscript.toLowerCase() && (now - lastAgentTranscriptTime) < 5000) {
+      console.log('🛡️ Suppressed duplicate agent transcript history:', clean);
+      return;
+    }
+    lastAgentTranscript = clean;
+    lastAgentTranscriptTime = now;
   }
 
   const emptyNote = drawerBody.querySelector('div[style*="text-align: center"]');
@@ -1261,9 +1285,6 @@ function switchToVoiceMode() {
     wakeUpSphere();
   }
 
-  // Ensure backend session is active with token
-  wsClient.startSession(userJwtToken);
-
   // Activate microphone session for hands-free voice interaction
   startVoiceSession();
 }
@@ -1297,7 +1318,7 @@ function appendChatMessage(speaker: 'user' | 'agent', text: string) {
   if (!text || !text.trim()) return;
   const clean = text.trim();
 
-  // Deduplication guard: ignore duplicate user messages within 5 seconds
+  // Deduplication guard: ignore duplicate messages within 5 seconds
   if (speaker === 'user') {
     const now = Date.now();
     if (clean.toLowerCase() === lastUserChatMessage.toLowerCase() && (now - lastUserChatTime) < 5000) {
@@ -1306,6 +1327,14 @@ function appendChatMessage(speaker: 'user' | 'agent', text: string) {
     }
     lastUserChatMessage = clean;
     lastUserChatTime = now;
+  } else if (speaker === 'agent') {
+    const now = Date.now();
+    if (clean.toLowerCase() === lastAgentChatMessage.toLowerCase() && (now - lastAgentChatTime) < 5000) {
+      console.log('🛡️ Suppressed duplicate agent chat bubble:', clean);
+      return;
+    }
+    lastAgentChatMessage = clean;
+    lastAgentChatTime = now;
   }
 
   // Remove the initial welcome card once real conversation starts
@@ -1959,9 +1988,6 @@ animate();
 
 // Auto-open in Chat Mode by default on page landing with microphone strictly disabled
 switchToChatMode();
-if (userJwtToken) {
-  wsClient.startSession(userJwtToken);
-}
 
 window.addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight;
