@@ -1443,17 +1443,7 @@ function handleIodFileUpload(file: File) {
   reader.readAsDataURL(file);
 }
 
-uploadIodBtn?.addEventListener('click', (e) => {
-  e.stopPropagation();
-  iodFileInput?.click();
-});
 
-iodFileInput?.addEventListener('change', () => {
-  const file = iodFileInput.files?.[0];
-  if (file) {
-    handleIodFileUpload(file);
-  }
-});
 
 iodRemoveBtn?.addEventListener('click', (e) => {
   e.stopPropagation();
