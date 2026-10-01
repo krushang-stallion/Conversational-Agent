@@ -142,7 +142,7 @@ export function dedicatedFetch(url: string | URL, init?: any): Promise<Response>
   });
 }
 
-async function extractPdfTextFromUrl(docUrl: string, token?: string): Promise<any> {
+export async function extractPdfTextFromUrl(docUrl: string, token?: string): Promise<any> {
   let cleanUrl = (docUrl || '').trim();
   if (!cleanUrl) {
     return { status: 'error', message: 'No document URL provided to inspect.' };
@@ -195,8 +195,9 @@ async function extractPdfTextFromUrl(docUrl: string, token?: string): Promise<an
       };
     }
 
-    const truncated = rawText.length > 10000;
-    const content = truncated ? rawText.slice(0, 10000) + '\n... [TRUNCATED FOR CONTEXT WINDOW]' : rawText;
+    const MAX_CHARS = 120000;
+    const truncated = rawText.length > MAX_CHARS;
+    const content = truncated ? rawText.slice(0, MAX_CHARS) + '\n... [TRUNCATED BEYOND 120,000 CHARACTERS]' : rawText;
 
     return {
       status: 'success',
@@ -204,7 +205,8 @@ async function extractPdfTextFromUrl(docUrl: string, token?: string): Promise<an
       characters_extracted: rawText.length,
       truncated,
       extracted_content: content,
-      direct_url: cleanUrl
+      direct_url: cleanUrl,
+      instruction: 'CRITICAL: Answer the user query directly from this full extracted text. DO NOT summarize the entire document unless an overview was explicitly requested.'
     };
   } catch (err: any) {
     console.error('Error parsing PDF in extractPdfTextFromUrl:', err);

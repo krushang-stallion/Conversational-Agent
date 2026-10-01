@@ -17,6 +17,7 @@ export interface ExtractedIodDocument {
   total_conditions: number;
   conditions: ExtractedIodCondition[];
   raw_summary?: string;
+  raw_text?: string;
   uploaded_at: string;
 }
 
@@ -137,6 +138,7 @@ ${cappedText}`;
       total_conditions: conditions.length,
       conditions,
       raw_summary: parsed.summary || `Extracted ${conditions.length} sanction conditions across ${pages} pages.`,
+      raw_text: rawText,
       uploaded_at: new Date().toISOString()
     };
   } catch (err: any) {

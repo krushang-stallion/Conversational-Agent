@@ -2,7 +2,7 @@ import { spawn } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import OpenAI from 'openai';
-import { MCPClientManager, ProjectInfo } from './mcpClient.js';
+import { MCPClientManager, ProjectInfo, extractPdfTextFromUrl } from './mcpClient.js';
 import {
   extractIodConditionsFromBuffer,
   processClearancePdfsInBatches,
@@ -37,6 +37,7 @@ export class SphereConversationalAgent {
   private activeIodSanction: ExtractedIodDocument | null = null;
   private lastProcessedQuery = '';
   private lastProcessedTime = 0;
+  private cachedProjectPermissions = new Map<string, any[]>();
 
   constructor(remoteMcpUrl?: string) {
     const cwd = process.cwd();
@@ -82,6 +83,7 @@ export class SphereConversationalAgent {
     this.activeIodSanction = null;
     this.lastProcessedQuery = '';
     this.lastProcessedTime = 0;
+    this.cachedProjectPermissions.clear();
   }
 
   /**
@@ -530,6 +532,109 @@ export class SphereConversationalAgent {
     };
   }
 
+  private detectReferredDocument(text: string): { docType: string; keywords: string[] } | null {
+    const lower = text.toLowerCase();
+    if (lower.includes('iod') || lower.includes('intimation of disapproval') || lower.includes('sanction letter') || lower.includes('amendment iod')) {
+      return { docType: 'IOD', keywords: ['iod', 'concession', 'amendment', 'sanction'] };
+    }
+    if (lower.includes('commencement certificate') || lower.includes('further cc') || lower.includes('plinth cc') || /\bcc\b/i.test(text)) {
+      return { docType: 'CC', keywords: ['commencement certificate', 'cc', 'plinth', 'further cc'] };
+    }
+    if (lower.includes('cfo') || lower.includes('fire noc') || lower.includes('fire clearance')) {
+      return { docType: 'CFO NOC', keywords: ['cfo', 'fire'] };
+    }
+    if (lower.includes('tree') && (lower.includes('noc') || lower.includes('clearance') || lower.includes('document') || lower.includes('complianc'))) {
+      return { docType: 'Tree NOC', keywords: ['tree'] };
+    }
+    if (lower.includes('swd') || lower.includes('storm water') || lower.includes('drainage')) {
+      return { docType: 'SWD NOC', keywords: ['swd', 'drainage', 'storm water'] };
+    }
+    if (lower.includes('occupancy certificate') || /\boc\b/i.test(text)) {
+      return { docType: 'Occupancy Certificate (OC)', keywords: ['occupancy', 'oc'] };
+    }
+    if (lower.includes('environment') || lower.includes('moef') || /\bec\b/i.test(text)) {
+      return { docType: 'Environmental Clearance', keywords: ['environment', 'moef', 'ec'] };
+    }
+    if (lower.includes('aviation') || lower.includes('aai')) {
+      return { docType: 'Civil Aviation NOC', keywords: ['aviation', 'aai'] };
+    }
+    return null;
+  }
+
+  private async resolveReferredDocumentText(
+    docInfo: { docType: string; keywords: string[] },
+    projectId: string,
+    userQuery: string,
+    callbacks: AgentCallbacks
+  ): Promise<{ docName: string; extractedText: string; url?: string } | null> {
+    // 1. Check if user uploaded an active IOD document
+    if (docInfo.docType === 'IOD' && this.activeIodSanction) {
+      if (this.activeIodSanction.raw_text) {
+        return {
+          docName: `Uploaded IOD (${this.activeIodSanction.file_name})`,
+          extractedText: this.activeIodSanction.raw_text
+        };
+      }
+      if (this.activeIodSanction.conditions && this.activeIodSanction.conditions.length > 0) {
+        const condText = this.activeIodSanction.conditions.map(c =>
+          `Condition ${c.condition_no} [Stage: ${c.stage} | Authority: ${c.authority}]: ${c.requirement}`
+        ).join('\n');
+        return {
+          docName: `Uploaded IOD (${this.activeIodSanction.file_name})`,
+          extractedText: condText
+        };
+      }
+    }
+
+    // 2. Fetch project permissions if not cached
+    let perms = this.cachedProjectPermissions.get(projectId);
+    if (!perms || perms.length === 0) {
+      try {
+        callbacks.onTranscript('agent', '📄 Fetching project records to locate document...', false);
+        const permsResult: any = await this.mcpManager.executeTool('get_project_permissions', { project_id: projectId });
+        perms = permsResult?.permissions || permsResult?.data?.permissions || (Array.isArray(permsResult) ? permsResult : []);
+        if (perms && perms.length > 0) {
+          this.cachedProjectPermissions.set(projectId, perms);
+        }
+      } catch (err) {
+        console.warn('⚠️ Could not fetch permissions for document resolution:', err);
+      }
+    }
+
+    if (!perms || perms.length === 0) return null;
+
+    // Find the matching permission
+    const matchedPerm = perms.find((p: any) => {
+      const pName = (p.name || '').toLowerCase();
+      return docInfo.keywords.some(k => pName.includes(k));
+    });
+
+    if (!matchedPerm) return null;
+
+    const docUrl = matchedPerm.ai_view_url ||
+      matchedPerm.documents?.permission_plan?.[0]?.ai_view_url ||
+      matchedPerm.documents?.lod_documents?.[0]?.files?.[0]?.ai_view_url ||
+      matchedPerm.documents?.other_files?.[0]?.ai_view_url;
+
+    if (!docUrl) return null;
+
+    callbacks.onTranscript('agent', `🔍 Reading full text of ${matchedPerm.name}...`, false);
+    try {
+      const docResult = await extractPdfTextFromUrl(docUrl, this.jwtToken);
+      if (docResult && docResult.extracted_content) {
+        return {
+          docName: matchedPerm.name,
+          extractedText: docResult.extracted_content,
+          url: docUrl
+        };
+      }
+    } catch (err) {
+      console.warn(`⚠️ Error reading PDF for ${matchedPerm.name}:`, err);
+    }
+
+    return null;
+  }
+
   /**
    * Autonomous Cloud Agent Loop: Executes directly on Render using OpenAI GPT-4o and Stallion MCP
    */
@@ -583,10 +688,45 @@ Categorize findings dynamically into:
 4. REMARKS & CAVEATS (Reference specific remarks_notes, financial guarantees, and validity dates from the documents).`
         : '';
 
+      // Detect if user query refers to a specific document (e.g. IOD, CC, CFO NOC)
+      const referredDoc = this.detectReferredDocument(userPrompt);
+      let documentDirectContext = '';
+
+      if (referredDoc) {
+        let targetProjectId = this.userProjects[0]?.id || '';
+        if (this.userProjects.length > 0) {
+          const promptLower = userPrompt.toLowerCase();
+          const matchedP = this.userProjects.find(p => promptLower.includes(p.name.toLowerCase()));
+          if (matchedP) targetProjectId = matchedP.id;
+        }
+
+        if (targetProjectId) {
+          const docData = await this.resolveReferredDocumentText(referredDoc, targetProjectId, userPrompt, callbacks);
+          if (docData && docData.extractedText) {
+            console.log(`✅ Loaded full document text for ${docData.docName} (${docData.extractedText.length} chars)`);
+            const isOverview = userPrompt.toLowerCase().includes('overview') || userPrompt.toLowerCase().includes('summarize');
+            documentDirectContext = `\n\n### 📑 FULL EXTRACTED TEXT OF REFERENCED DOCUMENT: "${docData.docName}"
+User Query: "${userPrompt}"
+
+CRITICAL INSTRUCTIONS:
+1. ${isOverview 
+      ? 'The user requested an overview: Provide a crisp executive overview of sanction date, approved floors/height, and key milestones.'
+      : 'DO NOT summarize the entire document! The user asked a specific question regarding this document. Answer ONLY what the user asked: "' + userPrompt + '".'}
+2. Search and analyze the FULL EXTRACTED TEXT below to give the exact, concrete answer.
+3. List the exact condition numbers, specific clauses, and stage mandates (e.g. if the user asks for compliances to be done before Further CC, list the exact conditions stipulated under Further CC / work beyond plinth).
+4. Do NOT output generic broad categories like "Structural and Safety Compliance", "Environmental Requirements", "Legal Settlements", etc. Citing exact condition numbers and concrete requirements is required.
+
+--- FULL EXTRACTED DOCUMENT TEXT (${docData.extractedText.length} characters) ---
+${docData.extractedText}
+--- END OF EXTRACTED DOCUMENT TEXT ---`;
+          }
+        }
+      }
+
       const systemMessage = {
         role: 'system' as const,
         content: `You are the Stallion Strategic Permission & Regulatory Specialist, an elite real estate compliance officer and executive municipal advisor.
-Your mission is focused on Real Estate Permissions, Municipal Approvals (MCGM/MHADA/SRA), and Compliance Governance.${activeProjectContext}${activeIodContext}
+Your mission is focused on Real Estate Permissions, Municipal Approvals (MCGM/MHADA/SRA), and Compliance Governance.${activeProjectContext}${activeIodContext}${documentDirectContext}
 
 ---
 ### 🎙️ CRITICAL: NATURAL EXECUTIVE SPOKEN VOICE STYLE
@@ -635,20 +775,17 @@ When the user asks to "audit permissions", "give a quick update", or "check stat
 5. Conclude proactively:
    * Offer to provide a deep-dive into major milestones: *"Would you like an in-depth overview of your IOD, Commencement Certificate (CC), or Occupancy Certificate (OC), or should I draft a follow-up reminder for a pending item?"*
 
-#### WORKFLOW 2: MILESTONE DEEP-DIVE (OVERVIEW OF IOD, CC, OC, OR SPECIFIC CLEARANCE)
-When the user asks:
-- *"What is the overview of IOD?"* or *"Summarize our IOD / Sanction letter"*
-- *"What is the overview of CC / Commencement Certificate?"* or *"What are our CC conditions?"*
-- *"What does the Occupancy Certificate (OC) say?"*
-- Or asks about a specific clearance (e.g. CFO NOC, Tree NOC, Aviation):
-1. Locate the specific permission from the project's permission list (e.g. permission with name matching "IOD", "Concession / Amendment IOD", "Commencement Certificate (CC)", "Plinth CC", "Further CC", "Occupancy Certificate (OC)").
-2. Call \`inspect_document_attachment(ai_view_url="<ai_view_url>")\` on that specific permission's attached PDF to read and extract its actual clauses.
-3. Extract and present:
-   * **Document Reference & Date**: Official sanction number and approval date.
-   * **Sanctioned Parameters**: Approved floors, height limits, plinth level, or work stage allowed.
-   * **Conditions Imposed**: Specific condition numbers and municipal clauses.
-   * **Stage Restrictions**: What must be complied with before the next milestone (e.g. before Further CC or OC).
-   * **Compliance Status**: Whether these conditions are met by existing project clearances.
+#### WORKFLOW 2: DOCUMENT-SPECIFIC QUERIES & CONDITIONS (WHEN A PARTICULAR DOCUMENT IS REFERRED TO)
+When the user refers to or asks about a specific document (e.g. "from IOD document", "in the CFO NOC", "CC conditions", "compliances before Further CC"):
+1. **STRICT RULE: DO NOT SUMMARIZE THE ENTIRE DOCUMENT**:
+   - If the user asks a specific question (e.g. "Can you tell me the compliances to be done before Further CC from IOD document"), answer ONLY that specific question!
+   - NEVER output broad generic categories summarizing the whole document (e.g. DO NOT output "1. Structural Compliance, 1. Environmental Requirements, 1. Legal Settlements, 1. Operational Measures, 1. Regulatory Compliance").
+2. **GROUND IN THE FULL EXTRACTED TEXT**:
+   - Use the FULL EXTRACTED TEXT of that document provided in context (or via \`inspect_document_attachment\`).
+   - Find the exact condition clauses, condition numbers, and requirements that specifically answer what the user asked (e.g., list the exact conditions stipulated under "Before issue of Further CC / work beyond plinth").
+   - Quote condition numbers (e.g. Condition 12, Condition 23, Condition 41) and specific municipal requirements.
+3. **ONLY SUMMARIZE IF EXPLICITLY ASKED FOR AN OVERVIEW**:
+   - ONLY deliver an executive overview/summary if the user literally asks: "Give me an overview of IOD" or "Summarize the CC". Otherwise, be targeted, precise, and direct.
 
 #### WORKFLOW 3: EXTERNAL IOD CROSS-MATCHING (ONLY IF USER UPLOADED A FILE)
 - If and only if the user explicitly uploaded an IOD document at the start, cross-match those external conditions against the Stallion clearances (Complied, In-Progress, Critical Blockers).
@@ -741,6 +878,10 @@ When the user asks to follow up or draft a reminder:
           console.log(`📡 [Cloud Agent] Calling MCP tool: ${toolName} with args:`, toolArgs);
           let toolResult = await this.mcpManager.executeTool(toolName, toolArgs);
 
+          if (toolName === 'inspect_document_attachment' && toolResult && typeof toolResult === 'object') {
+            (toolResult as any).user_query_directive = `CRITICAL: The user asked: "${userPrompt}". Answer ONLY the specific question asked using this full extracted text. DO NOT summarize the entire document unless an overview was requested. Quote exact condition numbers and clauses.`;
+          }
+
           // When querying project permissions, automatically run parallel clearance extraction on attached PDFs
           if (toolName === 'get_project_permissions' && this.openaiClient) {
             try {
@@ -751,6 +892,34 @@ When the user asks to follow up or draft a reminder:
               const permsList = parsedPerms?.permissions || parsedPerms?.data?.permissions || (Array.isArray(parsedPerms) ? parsedPerms : []);
 
               if (permsList.length > 0) {
+                this.cachedProjectPermissions.set(String(toolArgs.project_id || this.userProjects[0]?.id || ''), permsList);
+
+                // If user asked about a specific document and it wasn't pre-loaded, extract its full text here
+                let referredDocData: any = null;
+                const referred = this.detectReferredDocument(userPrompt);
+                if (referred) {
+                  const targetPerm = permsList.find((p: any) => {
+                    const pName = (p.name || '').toLowerCase();
+                    return referred.keywords.some(k => pName.includes(k));
+                  });
+                  if (targetPerm?.ai_view_url) {
+                    try {
+                      callbacks.onTranscript('agent', `🔍 Reading full text of ${targetPerm.name}...`, false);
+                      const fullDoc = await extractPdfTextFromUrl(targetPerm.ai_view_url, this.jwtToken);
+                      if (fullDoc?.extracted_content) {
+                        referredDocData = {
+                          permission_name: targetPerm.name,
+                          file_name: targetPerm.file_name,
+                          full_extracted_text: fullDoc.extracted_content,
+                          directive: `CRITICAL: The user asked: "${userPrompt}". DO NOT summarize the entire document. Answer ONLY the specific question asked using this full extracted text. Quote exact condition numbers and requirements.`
+                        };
+                      }
+                    } catch (e) {
+                      console.warn('Error reading referred doc in tool handler:', e);
+                    }
+                  }
+                }
+
                 callbacks.onTranscript('agent', '🔍 Analyzing existing clearance documents with gpt-4o-mini in parallel...', false);
                 const masterContext = await processClearancePdfsInBatches(
                   permsList,
@@ -777,6 +946,7 @@ When the user asks to follow up or draft a reminder:
                     file_name: p.file_name,
                     remark: p.remark
                   })),
+                  ...(referredDocData ? { referenced_document_full_text: referredDocData } : {}),
                   ...(this.activeIodSanction ? {
                     active_uploaded_iod: {
                       file_name: this.activeIodSanction.file_name,
@@ -786,9 +956,11 @@ When the user asks to follow up or draft a reminder:
                       conditions: this.activeIodSanction.conditions
                     }
                   } : {}),
-                  audit_instructions: this.activeIodSanction
-                    ? "CRITICAL: Compare every condition in active_uploaded_iod against unified_master_clearances. Group conditions naturally in conversational spoken sentences: state which are COMPLIED, which are IN PROGRESS, and which are CRITICAL BLOCKERS (required for current stage like Plinth CC or Further CC but missing or unapproved in Stallion). Specifically reference clearance remarks_notes, dates, and authorities. NEVER recite repetitive 'Condition - Status' bullet points."
-                    : "Deliver a crisp, data-grounded overview and status audit of these existing project permissions. Group permissions conversationally by status into natural spoken sentences (e.g. 'Your issued permissions are Permission 1 and Permission 2. Pending permissions are Permission 3 assigned to...'). Do NOT output repetitive 'Permission - Status' lists or recite item-by-item status tags. Summarize verified approvals, validities, pending items, assigned persons, and key remarks_notes. If the user asked for an overview of a specific milestone (e.g. IOD, CC, OC), identify that specific permission from all_project_permissions and call inspect_document_attachment(ai_view_url=...) to inspect its attached PDF."
+                  audit_instructions: referredDocData
+                    ? `CRITICAL: The user is asking a specific question regarding "${referredDocData.permission_name}": "${userPrompt}". DO NOT summarize the entire document. Answer ONLY the specific query asked by quoting the exact conditions and clauses from the full text provided.`
+                    : (this.activeIodSanction
+                      ? "CRITICAL: Compare every condition in active_uploaded_iod against unified_master_clearances. Group conditions naturally in conversational spoken sentences: state which are COMPLIED, which are IN PROGRESS, and which are CRITICAL BLOCKERS (required for current stage like Plinth CC or Further CC but missing or unapproved in Stallion). Specifically reference clearance remarks_notes, dates, and authorities. NEVER recite repetitive 'Condition - Status' bullet points."
+                      : "Deliver a crisp, data-grounded overview and status audit of these existing project permissions. Group permissions conversationally by status into natural spoken sentences (e.g. 'Your issued permissions are Permission 1 and Permission 2. Pending permissions are Permission 3 assigned to...'). Do NOT output repetitive 'Permission - Status' lists or recite item-by-item status tags. Summarize verified approvals, validities, pending items, assigned persons, and key remarks_notes. If the user asked for an overview of a specific milestone (e.g. IOD, CC, OC), identify that specific permission from all_project_permissions and call inspect_document_attachment(ai_view_url=...) to inspect its attached PDF.")
                 };
               }
             } catch (batchErr) {
